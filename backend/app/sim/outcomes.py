@@ -6,6 +6,8 @@ no LLM, no network, deterministic from its inputs. A stored model re-runs identi
 
 Where an event's likelihood comes from is recorded on the event (`basis`):
   sourced    a published figure found by research and verified in code -> a fixed probability
+  estimate   (any basis) the probability logic has combined the base rate with the person's context; each
+             life draws around its likelihood, spread by its stated uncertainty
   estimated  no published figure: only a verbal bin is known; each simulated life draws its own
              probability uniformly inside the bin's range, so the uncertainty is carried, not hidden
   background the life-course engine (engine.py), merged in by the caller on long horizons
@@ -104,7 +106,9 @@ def _ordered(events: list[dict]) -> list[int]:
 
 
 def seed_for(person_id: str, events: list[dict], n_steps: int, runs: int, patches: list[dict]) -> int:
-    core = [{k: e.get(k) for k in ("key", "kind", "window", "probability", "band", "bin", "basis", "depends_on")} for e in events]
+    core = [{k: e.get(k) for k in ("key", "kind", "window", "probability", "band", "bin", "basis", "depends_on")}
+            | ({"estimate": [e["estimate"]["likelihood"], e["estimate"]["spread"]]} if e.get("estimate") else {})
+            for e in events]
     blob = json.dumps([person_id, core, n_steps, runs, patches], sort_keys=True, default=str)
     return int.from_bytes(hashlib.sha256(blob.encode()).digest()[:8], "big")
 
@@ -130,7 +134,12 @@ def simulate_outcomes(person_id: str, events: list[dict], n_steps: int, runs: in
         lo, hi = (e.get("window") or [0, n_steps - 1])[:2]
         lo, hi = max(0, int(lo)), min(n_steps - 1, int(hi))
         windows.append((lo, max(lo, hi)))
-        if e.get("basis") in ("sourced", "personal") and e.get("probability") is not None:
+        estimate = e.get("estimate")
+        if estimate:
+            # the probability logic's estimate (probability.py): its likelihood, spread by its own uncertainty
+            half = float(estimate["spread"]) + widen
+            prob[i] = np.clip(float(estimate["likelihood"]) + (2 * draw[i] - 1) * half, 0.005, 0.995)
+        elif e.get("basis") in ("sourced", "personal") and e.get("probability") is not None:
             # a published (or personal track-record) figure; a band around it when the fit is poor
             half = float(e.get("band") or 0.0) + widen
             prob[i] = np.clip(float(e["probability"]) + (2 * draw[i] - 1) * half, 0.005, 0.995)

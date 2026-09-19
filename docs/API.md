@@ -259,6 +259,18 @@ Commit.patch   = { step, model: { force, prevent, likelier, less_likely }, ...li
 POST /branches/{id}/commits accepts { message, at } or { message, year }.
 Simulated events: payload.basis is "sourced" | "personal" | "estimated" | "background"; event_type is the PossibleEvent key
 (or the life-course type for background); "commit" events carry payload.commit_id.
+PossibleEvent += { jev, estimate }                               // Jev's judgement and the probability logic's result
+  jev      = { category: "career"|"education"|"research"|"entrepreneurship"|"financial"|"social"|"location"|"health"|"relationship"|"other",
+               personal_fit, experience_fit, difficulty, accessibility, evidence_strength: 1..5,
+               prerequisites: [{ requirement, met: "yes"|"no"|"unknown", basis }], rationale, judged_by: "llm"|"rules" }
+  estimate = { likelihood, low, high, spread: 0..1,             // what the simulation runs on; low/high is the range each life draws from
+               difficulty: 0..1, difficulty_label: "easy"|"moderate"|"hard"|"blocked",
+               confidence: 0..1, category, blocked: bool, judged_by,
+               base: { probability, basis }, shift,             // the starting figure and how far Jev's scores moved it (log-odds)
+               evidence: [{ kind: "sourced"|"personal"|"estimated"|"judged"|"prerequisite", text, evidence_id|null }] }
+  `probability` and `basis` are never rewritten by this; `words` follows `estimate.likelihood`.
+GET /assessment?branch_id=  ->  { branch_id, categories: { [category]: count }, events: [{ key, label, estimate, jev }] }   // most likely first
+
 ResearchStep messages also log: the look in the person's own log, "Found in memory" (evidence reused from the index
 instead of crawled), figures rejected because they were not in their own quoted snippet, and the life-script check.
 ```

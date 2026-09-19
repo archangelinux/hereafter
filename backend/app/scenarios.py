@@ -16,7 +16,7 @@ from hashlib import sha1
 from typing import Optional
 
 from . import branches as branch_ops
-from . import config, db, llm, outcome_model
+from . import config, db, jev, llm, outcome_model, probability
 from .models import Branch, Evidence, Horizon, LifeEvent, Option, Person, Question, ResearchStep, Scenario, StateVector
 from .sim.outcomes import UNANSWERED_WIDEN
 from .store import get_store
@@ -193,14 +193,17 @@ def _shape(person: Person, scenario: Scenario, fixed: Optional[Horizon], only: O
         db.save_scenario(scenario)
     background = branch_ops.has_background(scenario.horizon)
     text = scenario.situation + " " + " ".join(f"{o.title} {o.details}" for o in scenario.options)
-    with ThreadPoolExecutor(max_workers=4) as pool:  # the remaining extraction calls, side by side
+    about = _about(fork, assumed)
+    with ThreadPoolExecutor(max_workers=8) as pool:  # the remaining extraction calls, side by side
         script_job = pool.submit(life_script, person, fork, text) if background else None
+        jev_jobs = [pool.submit(jev.judge_option, person, scenario, o, events, about) for o, events in zip(scenario.options, models)]
         read = list(pool.map(lambda o: branch_ops.assumption_from_option(scenario.situation, o) if background else ({}, {}),
                              scenario.options))
     script, because = script_job.result() if script_job else ({}, "")
+    judged = [job.result() for job in jev_jobs]
 
     rebuilt = []
-    for option, events, (assumption, params) in zip(scenario.options, models, read):
+    for option, events, (assumption, params), n_judged in zip(scenario.options, models, read, judged):
         with branch_ops.lock:
             branch = _branches_of(scenario).get(option.id)
             if branch is None or branch.status != "open":
@@ -217,6 +220,7 @@ def _shape(person: Person, scenario: Scenario, fixed: Optional[Horizon], only: O
                 branch.span, branch.horizon = scenario.horizon, scenario.horizon.count
                 branch.model = {**outcome_model.public_model(events), "widen": widen, "life_script": script}
                 get_store().add_evidence(_track_record(person, branch.id, events))
+                probability.assess_events(events)  # base rate + Jev's scores -> likelihood, difficulty, confidence
                 rebuilt.append(branch.id)
             branch.forming = False
             branch.revision += 1
@@ -225,6 +229,10 @@ def _shape(person: Person, scenario: Scenario, fixed: Optional[Horizon], only: O
             _say(branch.id, "found" if looked_at else "skipped",
                  f"Looked in your own log first: {looked_at} thing{'s' if looked_at != 1 else ''} that bear on this.")
             _say(branch.id, "found", f"{len(events)} things that could happen here; a thousand lives simulated from them.")
+            if events:
+                _say(branch.id, "found" if n_judged else "skipped",
+                     f"Sorted and scored {n_judged or 'none of'} them against your log for fit, difficulty and requirements."
+                     if n_judged else "Scoring against your log was not available; likelihoods rest on the base rates alone.")
             if background:
                 wanted = [k for k, v in script.items() if v]
                 _say(branch.id, "found" if wanted else "skipped",
