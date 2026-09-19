@@ -1,103 +1,77 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { Html } from '@react-three/drei'
 import { ink } from './palette'
-import { along, hash01, type WorldLayout } from './layout'
-import { domeGeometry, gateGeometry, haloTexture, hutGeometry, isletGeometry, milestoneGeometry, pennantGeometry, puffGeometry, seedGeometry, softMaterial, stoneGeometry, treeGeometry } from './soft'
-import { Bobbing } from './Trail'
+import { DS, MAIN_WIDTH, type Plaza, type WorldLayout } from './layout'
+import { createRibbon, ribbonMaterial, writeRibbon } from './ribbon'
+import { haloTexture, plazaGeometry, puffGeometry, seedGeometry, softMaterial, swell } from './soft'
 
-/**
- * The past: the same stones in warm sand and terracotta, fully laid, resting on soft islets, with a
- * few small rounded landmarks: one dome where learning began, one gate at a move, one hut at first
- * work, and the one tree where it all starts. You can look back; it is finished.
- */
-export function Past({ layout, still, onOpenLog }: { layout: WorldLayout; still: boolean; onOpenLog: () => void }) {
-  const { stones, samples, nodes } = layout.main
-  const islets = useMemo(() => stones.filter((_, i) => i % 7 === 3), [stones])
-  const pick = (type: RegExp, not: number[]) => nodes.find((n) => type.test(n.event?.event_type ?? '') && not.every((z) => Math.hypot(z - n.at.z) > 1.2))
-  const learning = pick(/education/, [])
-  const moving = pick(/city_move/, learning ? [learning.at.z] : [])
-  const working = pick(/job_start/, [learning?.at.z ?? 999, moving?.at.z ?? 999])
-  const beside = (p: { x: number; y: number; z: number; heading: number }, off: number, drop = 0): [number, number, number] => [p.x + Math.cos(p.heading) * off, p.y + drop, p.z + Math.sin(p.heading) * off]
-  const start = along(samples, 0.5)
-  const [hovered, setHovered] = useState<string | null>(null)
-
+function Bobbing({ at, still, children }: { at: [number, number, number]; still: boolean; children: React.ReactNode }) {
+  const ref = useRef<THREE.Group>(null)
+  useFrame((state) => {
+    if (ref.current && !still) ref.current.position.y = at[1] + swell(at[0], at[2], state.clock.elapsedTime)
+  })
   return (
-    <group>
-      {stones.map((s) => (
-        <Bobbing key={s.index} at={[s.x, s.y, s.z]} still={still}>
-          <mesh geometry={stoneGeometry('past')} material={softMaterial(1)} scale={[s.r, Math.min(1, s.r * 2), s.r]} />
-        </Bobbing>
-      ))}
-      {/* the stone under the figure's feet: where the trail opens */}
-      <Bobbing at={[0, 0.04, 0]} still={still}>
-        <mesh geometry={stoneGeometry('past')} material={softMaterial(1)} scale={[0.85, 1, 0.85]} />
-      </Bobbing>
-      <Bobbing at={[0, -0.34, 0]} still={still}>
-        <mesh geometry={isletGeometry('past', 1)} material={softMaterial(1)} scale={1.5} />
-      </Bobbing>
-      {islets.map((s) => (
-        <Bobbing key={s.index} at={[s.x, s.y - 0.36, s.z]} still={still}>
-          <mesh geometry={isletGeometry('past', (s.index % 3) as 0 | 1 | 2)} material={softMaterial(1)} scale={1.0 + hash01(`trunk:islet:${s.index}`) * 0.6} />
-        </Bobbing>
-      ))}
-
-      {nodes.map((n) => (
-        <mesh
-          key={n.id}
-          geometry={milestoneGeometry('past')}
-          material={softMaterial(1)}
-          position={beside(n.at, -0.62, -0.12)}
-          onClick={(e) => (e.delta > 6 ? undefined : (e.stopPropagation(), onOpenLog()))}
-          onPointerOver={(e) => (e.stopPropagation(), setHovered(n.id), (document.body.style.cursor = 'pointer'))}
-          onPointerOut={() => (setHovered(null), (document.body.style.cursor = ''))}
-        >
-          {hovered === n.id && (
-            <Html position={[0, 0.7, 0]} zIndexRange={[9, 5]} style={{ pointerEvents: 'none' }}>
-              <div className="hw-note hw-note--left">
-                <span className="hw-note__caption">{n.caption}</span>
-                <span className="hw-note__text">{n.label}</span>
-              </div>
-            </Html>
-          )}
-        </mesh>
-      ))}
-
-      {learning && (
-        <group position={beside(learning.at, -2.0, -0.2)}>
-          <mesh geometry={isletGeometry('past', 1)} material={softMaterial(1)} scale={1.5} />
-          <mesh geometry={domeGeometry()} material={softMaterial(1)} />
-          <mesh geometry={pennantGeometry()} material={softMaterial(1)} position={[0, 1.3, 0]} />
-        </group>
-      )}
-      {moving && <mesh geometry={gateGeometry()} material={softMaterial(1)} position={beside(moving.at, 0, -0.1)} rotation={[0, -moving.at.heading, 0]} />}
-      {working && (
-        <group position={beside(working.at, 1.8, -0.3)}>
-          <mesh geometry={isletGeometry('past', 2)} material={softMaterial(1)} scale={1.1} />
-          <mesh geometry={hutGeometry()} material={softMaterial(1)} />
-        </group>
-      )}
-
-      {/* where it all starts: a little ground, and the one tree */}
-      <group position={[start.x + 1.5, start.y - 0.25, start.z + 0.9]}>
-        <mesh geometry={isletGeometry('past', 0)} material={softMaterial(1)} scale={1.3} />
-        <mesh geometry={treeGeometry()} material={softMaterial(1)} />
-      </group>
+    <group ref={ref} position={at}>
+      {children}
     </group>
   )
 }
 
-/** What has been picked to keep: a soft-gold seed with a gentle halo, resting on its own small islet ahead of now. */
+/** Main: what actually happened. One strong band of warm stone, in long curves, ending under the figure's feet. */
+export function Main({ layout, still }: { layout: WorldLayout; still: boolean }) {
+  const { samples } = layout.main
+  const geometry = useMemo(() => {
+    const g = createRibbon(samples.length)
+    writeRibbon(g, { samples, built: new Float32Array(samples.length).fill(1), firm: () => 1, width: MAIN_WIDTH, sink: 0, phase: 1.3, start: 0, end: (samples.length - 1) * DS + MAIN_WIDTH * 0.2 })
+    return g
+  }, [samples])
+  const material = useMemo(() => ribbonMaterial(), [])
+  useEffect(() => () => geometry.dispose(), [geometry])
+  useFrame((state) => {
+    material.uniforms.uTime.value = still ? 0 : state.clock.elapsedTime
+    material.uniforms.uFarPast.value = 3 // the far past comes in out of the haze
+  })
+  return <mesh geometry={geometry} material={material} frustumCulled={false} renderOrder={3} />
+}
+
+/**
+ * A circle, only where a decision is made: a calm plaza for a life decision, a small round for a
+ * day-to-day one. A decision that is not in focus is only its circle; touching it asks for it to be opened.
+ */
+export function Plazas({ plazas, still, onHover, onPick }: { plazas: Plaza[]; still: boolean; onHover: (id: string | null) => void; onPick: (plaza: Plaza) => void }) {
+  return (
+    <group>
+      {plazas.map((p) => (
+        <Bobbing key={p.id} at={[p.at.x, p.at.y + 0.02, p.at.z]} still={still}>
+          <mesh
+            geometry={plazaGeometry(p.onMain || p.decided ? 'past' : 'open')}
+            material={softMaterial(1)}
+            scale={[p.r, p.big ? 0.5 : 0.44, p.r]}
+            renderOrder={4}
+            onClick={(e) => {
+              if (e.delta > 6 || !p.collapsed) return
+              e.stopPropagation()
+              onPick(p)
+            }}
+            onPointerOver={(e) => (e.stopPropagation(), onHover(p.id), p.collapsed && (document.body.style.cursor = 'pointer'))}
+            onPointerOut={() => (onHover(null), (document.body.style.cursor = ''))}
+          />
+        </Bobbing>
+      ))}
+    </group>
+  )
+}
+
+/** What has been picked to keep: a soft-gold seed with a gentle halo, resting on the way ahead of now. */
 export function Seeds({ layout, still }: { layout: WorldLayout; still: boolean }) {
   const halo = useMemo(() => new THREE.SpriteMaterial({ map: haloTexture(), transparent: true, depthWrite: false, toneMapped: false }), [])
   return (
     <group>
       {layout.main.seeds.map((s) => (
-        <Bobbing key={s.id} at={[s.at.x, s.at.y, s.at.z]} still={still}>
-          <mesh geometry={isletGeometry('past', 2)} material={softMaterial(1)} scale={0.7} />
-          <sprite material={halo} scale={[1.5, 1.5, 1]} position={[0, 0.5, 0]} />
-          <mesh geometry={seedGeometry()} material={softMaterial(1)} position={[0, 0.5, 0]} scale={1.2} />
+        <Bobbing key={s.id} at={[s.at.x, s.at.y + 0.2, s.at.z]} still={still}>
+          <sprite material={halo} scale={[1.5, 1.5, 1]} />
+          <mesh geometry={seedGeometry()} material={softMaterial(1)} scale={1.2} />
         </Bobbing>
       ))}
     </group>

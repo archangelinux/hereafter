@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Insets, Zone } from '../types'
 
-const SELECTORS = ['.masthead', '.hud-right', '.hud-bottom .corner:not(.corner--right)', '.hud-bottom .narrate__box', '.actions', '.line__legend', '.line__recentre', '.reader', '.drawer', '.satchel']
+const SELECTORS = ['.hud__left > *:not(.h-fill)', '.hud__right > *', '.hud__bottom > *', '.hud__top', '.reader', '.drawer', '.satchel']
 
 /** Where the HUD actually is, measured. Views keep their labels out of these regions, and the
  *  free area between them is where "now" and the figure are framed. */
@@ -19,10 +19,12 @@ export function useZones(deps: unknown[]): { zones: Zone[]; free: Insets } {
       const W = innerWidth
       const H = innerHeight
       const rect = (sel: string) => document.querySelector(sel)?.getBoundingClientRect()
-      const left = rect('.masthead')
-      const right = rect('.reader') ?? rect('.drawer') ?? rect('.hud-right') ?? rect('.actions')
-      const bottom = rect('.hud-bottom .narrate__box')
-      const free = { top: 0, left: left ? left.right + 10 : 0, right: right ? W - right.left + 10 : 0, bottom: bottom ? H - bottom.top + 10 : 0 }
+      const narrow = innerWidth <= 900
+      const left = narrow ? undefined : rect('.hud__left')
+      const right = rect('.reader') ?? rect('.drawer') ?? (narrow ? undefined : rect('.hud__right'))
+      const bottom = rect('.hud__bottom > *') ?? (narrow ? rect('.hud__right > *') : undefined)
+      const top = narrow ? rect('.hud__top') : undefined
+      const free = { top: top ? top.bottom + 4 : 0, left: left ? left.right + 10 : 0, right: right ? W - right.left + 10 : 0, bottom: bottom ? H - bottom.top + 10 : 0 }
       setState((prev) => (JSON.stringify(prev) === JSON.stringify({ zones, free }) ? prev : { zones, free }))
     }
     measure()

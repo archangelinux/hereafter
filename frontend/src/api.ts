@@ -20,6 +20,7 @@ import type {
   Inventory,
   LivesResponse,
   MergeResponse,
+  ModelCard,
   Offering,
   OptionDraft,
   Person,
@@ -27,6 +28,7 @@ import type {
   Scenario,
   ScenarioResponse,
   Session,
+  TicketPatch,
   TrunkResponse,
   Which,
 } from './types'
@@ -100,6 +102,9 @@ function offeringForm(o: Offering): FormData {
   if (o.handles && Object.keys(o.handles).length) form.set('handles', JSON.stringify(o.handles))
   if (o.links?.length) form.set('links', JSON.stringify(o.links))
   if (o.live_source) form.set('live_source', o.live_source)
+  if (o.income !== undefined) form.set('income', String(o.income))
+  if (o.net_worth !== undefined) form.set('net_worth', String(o.net_worth))
+  if (o.currency) form.set('currency', o.currency)
   for (const file of o.files ?? []) form.append('files', file, file.name)
   return form
 }
@@ -123,16 +128,18 @@ export interface Api {
   readonly offline: boolean
   /** v2 routes the live backend did not have; answered locally instead. */
   readonly missing: Set<string>
-  createPerson(p: Pick<Person, 'display_name' | 'birth_year' | 'sex'>): Promise<Session>
+  createPerson(p: Pick<Person, 'display_name' | 'birth_year' | 'sex'> & { income?: number; net_worth?: number; currency?: string }): Promise<Session>
   trunk(personId: string): Promise<TrunkResponse>
   branches(personId: string): Promise<BranchesResponse>
   scenarios(personId: string): Promise<Scenario[]>
-  createScenario(personId: string, situation: string, options: OptionDraft[], extra?: { horizon?: Horizon; assuming_branch_id?: string }): Promise<ScenarioResponse>
+  createScenario(personId: string, situation: string, options: OptionDraft[], extra?: { horizon?: Horizon; assuming_branch_id?: string; scale?: 'big' | 'small' }): Promise<ScenarioResponse>
+  /** an inline edit to a ticket */
+  editTicket(scenario: Scenario, patch: TicketPatch): Promise<ScenarioResponse>
   /** answers are appended to main, so nothing is asked twice; the affected branches firm up */
   answer(scenarioId: string, answers: Record<string, string>): Promise<ScenarioResponse>
   research(branchId: string): Promise<ResearchResponse>
   /** `at` is the date of the step the change is made at */
-  commit(branchId: string, at: string, message: string): Promise<BranchView>
+  commit(branchId: string, at: string, message: string, eventKey?: string): Promise<BranchView>
   undo(branchId: string, commitId?: string): Promise<BranchView>
   compare(ids: string[]): Promise<CompareResponse>
   chapter(branchId: string, at: string, which?: Which): Promise<Chapter>
@@ -142,8 +149,12 @@ export interface Api {
   ingest(offering: Offering): Promise<IngestResult>
   merge(branchId: string, confirm: string): Promise<MergeResponse>
   carry(branchId: string, eventId: string): Promise<CarryResponse>
+  /** how the numbers are made, in plain words */
+  model(): Promise<ModelCard>
   inventory(personId: string): Promise<Inventory>
   erase(personId: string): Promise<EraseResult>
+  /** forget one offering: everything on main that came from it goes */
+  forget(personId: string, origin: string): Promise<{ origin: string; removed: number }>
 }
 
 function liveApi(): Api {
@@ -218,6 +229,21 @@ function liveApi(): Api {
           return { scenario: impliedScenarios(person_id, branches, situation)[0], branches }
         },
       ),
+    async editTicket(scenario, patch) {
+      // POST /scenarios/{id}/edit: renames, decide-by dates, big/small and added paths all live on the backend
+      const ids = scenario.options.map((o) => o.id)
+      const body = {
+        ...(patch.situation ? { situation: patch.situation } : {}),
+        ...(patch.scale ? { scale: patch.scale } : {}),
+        ...(patch.rename ? { rename: { [patch.rename.option_id]: patch.rename.title } } : {}),
+        ...(patch.decide_by !== undefined ? { deadline: Object.fromEntries(ids.map((id) => [id, patch.decide_by])) } : {}),
+        ...(patch.add_option ? { add: [{ title: patch.add_option }] } : {}),
+      }
+      const res = await post<ScenarioResponse>(`/scenarios/${q(scenario.id)}/edit`, body, 240_000)
+      const branches = res.branches.map(normaliseView)
+      lastViews = [...lastViews.filter((v) => !branches.some((x) => x.branch.id === v.branch.id)), ...branches]
+      return { scenario: normaliseScenario(res.scenario), branches }
+    },
     answer: (scenarioId, answers) =>
       orLocally(
         'POST /scenarios/answers',
@@ -228,8 +254,8 @@ function liveApi(): Api {
         notYet('Answering'),
       ),
     research: (id) => orLocally('/research', () => read(`/research?branch_id=${q(id)}`), () => ({ branch_id: id, research: 'none' as const, steps: [] })),
-    commit: (id, at, message) =>
-      orLocally('POST /branches/commits', async () => normaliseView(await post<BranchView>(`/branches/${q(id)}/commits`, { year: +at.slice(0, 4), at, message }, 180_000)), notYet('A commit')),
+    commit: (id, at, message, event_key) =>
+      orLocally('POST /branches/commits', async () => normaliseView(await post<BranchView>(`/branches/${q(id)}/commits`, { year: +at.slice(0, 4), at, message, ...(event_key ? { event_key } : {}) }, 180_000)), notYet('A commit')),
     undo: (id, commit_id) =>
       orLocally('POST /branches/undo', async () => normaliseView(await post<BranchView>(`/branches/${q(id)}/undo`, commit_id ? { commit_id } : {}, 120_000)), notYet('Undo')),
     compare: (ids) =>
@@ -265,6 +291,7 @@ function liveApi(): Api {
     ingest: (offering) => http('/ingest', { method: 'POST', body: offeringForm(offering), timeoutMs: 240_000 }),
     merge: (branch_id, confirm) => post('/merge', { branch_id, confirm }),
     carry: (branch_id, event_id) => post('/carry', { branch_id, event_id }),
+    model: () => orLocally('/model', () => read<ModelCard>('/model'), () => LOCAL_MODEL),
     inventory: (id) =>
       orLocally('/inventory', () => read(`/inventory?person_id=${q(id)}`), () => {
         const bySource = new Map<string, TrunkResponse['events']>()
@@ -277,7 +304,37 @@ function liveApi(): Api {
           stored_nowhere: ['Raw chat exports', 'Uploaded files', "Other people's names or messages"],
         }
       }),
+    forget: (person_id, origin) => orLocally('POST /forget', () => post('/forget', { person_id, origin }, 60_000), notYet('Forgetting one offering')),
     erase: (person_id) => orLocally('POST /erase', () => post('/erase', { person_id, confirm: 'erase' }, 180_000), notYet('Erasing')),
+  }
+}
+
+/** What an edit does to a ticket; used by the offline sample. */
+/** Shown when the backend has no model card yet, and offline. It states only what the simulator does. */
+export const LOCAL_MODEL: ModelCard = {
+  version: 'described by the app',
+  summary: 'Each path is lived a thousand times. A percentage is the share of those thousand simulated lives in which the event happened before the path’s horizon.',
+  steps: [
+    { title: 'A base rate', text: 'Each possible event starts from a base rate: a published figure found by reading the web (with its source and the group it describes), a figure from the life-course tables, or, when nothing is published, an estimate drawn from a stated range.' },
+    { title: 'Your personality', text: 'If Hereafter has a personality estimate for you, each trait can shift the odds a little. Published effects are used where they exist; otherwise a small assumed effect, labelled as assumed. Low-confidence estimates shift less.' },
+    { title: 'Dependencies', text: 'Some events make others more or less likely (you cannot be home by eleven if you stayed past one). These multiply the odds.' },
+    { title: 'Commit and branch', text: 'While living a path you can commit a step (one thing you assume or do; the path stays one line and everything after is simulated again) or branch (split the path into two or more paths). Both can be undone. Only a merge, which records a choice on main, is permanent.' },
+    { title: 'A thousand lives', text: 'The path is simulated a thousand times with those odds. The percentage shown is how many of the thousand contain the event. The story you read follows the most typical of them.' },
+  ],
+  constants: [{ name: '1,000', value: '', meaning: 'simulated lives per path' }],
+  limits: ['Estimates are estimates: an event with no published rate is only placed in a range.', 'Published rates describe groups, not you.', 'The model never sees the future; it cannot rule anything in or out.'],
+}
+
+export function applyPatch(s: Scenario, patch: TicketPatch): Scenario {
+  return {
+    ...s,
+    situation: patch.situation ?? s.situation,
+    scale: patch.scale ?? s.scale,
+    options: s.options.map((o) => ({
+      ...o,
+      title: patch.rename?.option_id === o.id ? patch.rename.title : o.title,
+      deadline: patch.decide_by !== undefined ? patch.decide_by : o.deadline,
+    })),
   }
 }
 

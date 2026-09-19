@@ -1,7 +1,7 @@
 // Things the client can work out from a BranchView on its own. Used to fill in newer fields when
 // an older backend leaves them out, and by the offline sample.
 
-import { words } from './format'
+import { isByYear, stepDate, words } from './format'
 import type { Aspect, Branch, BranchView, BranchYear, Chapter, CompareResponse, Outlook, Scenario, StateVector } from './types'
 
 export const BACKGROUND_ASPECTS: Aspect[] = ['city', 'employment', 'income_band', 'housing', 'relationship', 'children', 'alive']
@@ -88,7 +88,11 @@ export function normaliseView(view: BranchView): BranchView {
   }
 }
 
-export const normaliseScenario = (s: Scenario): Scenario => ({ ...s, horizon: s.horizon ?? { unit: 'years', count: 40 }, questions: s.questions ?? [], assuming_branch_id: s.assuming_branch_id ?? null })
+/** A life decision, or something day to day. The backend says; until it does, the horizon decides. */
+export const scaleOf = (s: Pick<Scenario, 'scale' | 'horizon'>): 'big' | 'small' =>
+  s.scale ?? (s.horizon?.unit === 'years' || (s.horizon?.unit === 'months' && s.horizon.count >= 6) ? 'big' : 'small')
+
+export const normaliseScenario = (s: Scenario): Scenario => ({ ...s, scale: scaleOf(s), horizon: s.horizon ?? { unit: 'years', count: 40 }, questions: s.questions ?? [], assuming_branch_id: s.assuming_branch_id ?? null })
 
 const UNIT_DAYS = { days: 1, weeks: 7, months: 30.44, years: 365.25 } as const
 const GHOST_STEPS = 6
@@ -129,15 +133,15 @@ export function compareViews(views: BranchView[]): CompareResponse {
     const rows = keys.map((aspect) => {
       const values = at.map((y, n) => {
         const entry = y.outlook[aspect] ?? { value: '—', words: '', share: 0 }
-        return { branch_id: views[n].branch.id, value: entry.value, words: entry.words, share: entry.share }
+        return { branch_id: views[n].branch.id, value: entry.value, words: entry.words, share: entry.share, probability: entry.probability }
       })
       return { aspect, differs: new Set(values.map((v) => v.value)).size > 1, values }
     })
-    return { year: at[0].year, age: at[0].state.age, label: at[0].label, rows }
+    return { year: at[0].year, age: at[0].state.age, label: stepDate(at[0].at, isByYear(views[0].years)), rows }
   })
   const distinctive = views.flatMap((v) => {
     const others = views.filter((o) => o !== v).flatMap((o) => o.branch.model.events.map((e) => e.key))
-    return v.branch.model.events.filter((e) => !others.includes(e.key)).slice(0, 3).map((e) => ({ branch_id: v.branch.id, label: e.label, words: e.words, basis: e.basis }))
+    return v.branch.model.events.filter((e) => !others.includes(e.key)).slice(0, 3).map((e) => ({ branch_id: v.branch.id, label: e.label, words: e.words, basis: e.basis, probability: e.probability }))
   })
   return { branches: views.map((v) => v.branch), checkpoints, distinctive }
 }
@@ -154,7 +158,9 @@ export function spanFor(years: BranchYear[], at: string): [number, number] {
 export function plainChapter(view: BranchView, at: string, years: BranchYear[] = view.years): Chapter {
   const [a, b] = spanFor(years, at)
   const steps = years.slice(a, b + 1)
-  const paragraphs = steps.filter((y) => y.events.length > 0).map((y) => ({ text: `${sentenceCase(y.label)}. ${y.events.map((e) => e.text).join('; ')}.`, evidence_ids: [] as string[] }))
+  const byYear = isByYear(years)
+  const when = (y: BranchYear) => stepDate(y.at, byYear)
+  const paragraphs = steps.filter((y) => y.events.length > 0).map((y) => ({ text: `${sentenceCase(when(y))}. ${y.events.map((e) => e.text).join('; ')}.`, evidence_ids: [] as string[] }))
   if (paragraphs.length === 0) paragraphs.push({ text: 'Nothing the simulation marks as an event. The days go on.', evidence_ids: [] })
   return {
     branch_id: view.branch.id,
@@ -163,7 +169,7 @@ export function plainChapter(view: BranchView, at: string, years: BranchYear[] =
     to_year: steps[steps.length - 1].year,
     from_at: steps[0].at,
     to_at: steps[steps.length - 1].at,
-    title: steps.length === 1 || steps[0].label === steps[steps.length - 1].label ? sentenceCase(steps[0].label) : `${sentenceCase(steps[0].label)} to ${steps[steps.length - 1].label}`,
+    title: steps.length === 1 || when(steps[0]) === when(steps[steps.length - 1]) ? sentenceCase(when(steps[0])) : `${sentenceCase(when(steps[0]))} to ${when(steps[steps.length - 1])}`,
     status: 'ready',
     paragraphs,
   }

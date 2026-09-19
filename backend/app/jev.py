@@ -81,7 +81,7 @@ def record_for(person: Person, scenario: Scenario, option: Option) -> str:
 def judge(events: list[dict], about: str = "", option: str = "", record: str = "") -> int:
     """Attach `event["jev"]` to every event that does not have one. Returns how many the model judged
     (0 when it is off or failed; those events get the rules judgement)."""
-    todo = [e for e in events if not e.get("jev")]
+    todo = [e for e in events if not e.get("jev") and not e.get("head")]
     if not todo:
         return 0
     parsed = llm.judge_events(about, record, option, todo)

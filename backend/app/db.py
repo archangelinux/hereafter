@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date
 import threading
 from typing import Optional
 
 from . import config, security
+from .sim.outcomes import date_label
 from .models import Branch, BranchYear, Chapter, Commit, Paragraph, Person, ResearchStep, Scenario
 
 _lock = threading.Lock()
@@ -36,6 +38,7 @@ CREATE TABLE IF NOT EXISTS chapters (
   branch_id TEXT NOT NULL, revision INTEGER NOT NULL, which TEXT NOT NULL, from_at TEXT NOT NULL,
   status TEXT, doc TEXT, PRIMARY KEY (branch_id, revision, which, from_at)
 );
+CREATE TABLE IF NOT EXISTS bibles (branch_id TEXT PRIMARY KEY, doc TEXT);
 CREATE TABLE IF NOT EXISTS research_steps (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, branch_id TEXT NOT NULL, doc TEXT NOT NULL
 );
@@ -59,6 +62,8 @@ def conn() -> sqlite3.Connection:
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(SCHEMA)
+        if "money" not in {r[1] for r in c.execute("PRAGMA table_info(people)")}:
+            c.execute("ALTER TABLE people ADD COLUMN money TEXT")
         _local.conn, _local.generation = c, _generation
     return _local.conn
 
@@ -83,16 +88,17 @@ def _exec(sql: str, args: tuple = ()) -> None:
 def upsert_person(p: Person, token_hash: Optional[str] = None) -> Person:
     """Fills in what is new and never blanks what is already known, in one statement."""
     _exec(
-        "INSERT INTO people (id, display_name, birth_year, sex, personality, token_hash) VALUES (?,?,?,?,?,?) "
+        "INSERT INTO people (id, display_name, birth_year, sex, personality, token_hash, money) VALUES (?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "display_name=COALESCE(excluded.display_name, display_name), "
         "birth_year=COALESCE(excluded.birth_year, birth_year), sex=COALESCE(excluded.sex, sex), "
         "personality=COALESCE(excluded.personality, personality), "
-        "token_hash=COALESCE(token_hash, excluded.token_hash)",
+        "token_hash=COALESCE(token_hash, excluded.token_hash), money=COALESCE(excluded.money, money)",
         (
             p.id, security.seal(p.display_name) if p.display_name else None,
             security.seal(str(p.birth_year)) if p.birth_year else None, p.sex,
             security.seal(json.dumps(p.personality)) if p.personality else None, token_hash,
+            security.seal(json.dumps(p.money)) if p.money else None,
         ),
     )
     return get_person(p.id)
@@ -104,9 +110,10 @@ def get_person(person_id: str) -> Optional[Person]:
         return None
     born = security.unseal(row["birth_year"])
     traits = security.unseal(row["personality"])
+    money = security.unseal(row["money"])
     return Person(id=row["id"], display_name=security.unseal(row["display_name"]) or "",
                   birth_year=int(born) if born else None, sex=row["sex"],
-                  personality=json.loads(traits) if traits else None)
+                  personality=json.loads(traits) if traits else None, money=json.loads(money) if money else None)
 
 
 def person_token_hash(person_id: str) -> Optional[str]:
@@ -162,15 +169,24 @@ def save_branch(b: Branch, years: Optional[list[BranchYear]] = None, rare: Optio
 
 
 def rare_life(branch_id: str) -> list[BranchYear]:
-    row = conn().execute("SELECT rare FROM branches WHERE id=?", (branch_id,)).fetchone()
-    return [BranchYear(**y) for y in json.loads(row["rare"] or "[]")] if row else []
+    row = conn().execute("SELECT doc, rare FROM branches WHERE id=?", (branch_id,)).fetchone()
+    return _dated(Branch(**json.loads(row["doc"])), json.loads(row["rare"] or "[]")) if row else []
 
 
 def _branch(row: sqlite3.Row) -> tuple[Branch, list[BranchYear]]:
     branch = Branch(**json.loads(row["doc"]))
     if branch.status == "expired":  # rows written before "stale" replaced it
         branch.status = "stale"
-    return branch, [BranchYear(**y) for y in json.loads(row["years"] or "[]")]
+    return branch, _dated(branch, json.loads(row["years"] or "[]"))
+
+
+def _dated(branch: Branch, raw: list[dict]) -> list[BranchYear]:
+    """Step captions are dates, worked out when read so that "today" is only ever today."""
+    years = [BranchYear(**y) for y in raw]
+    for y in years:
+        if y.at:
+            y.label = date_label(date.fromisoformat(y.at[:10]), branch.span.unit)
+    return years
 
 
 def get_branch(branch_id: str) -> Optional[tuple[Branch, list[BranchYear]]]:
@@ -202,6 +218,25 @@ def get_chapter(branch_id: str, revision: int, which: str, from_at: str) -> Opti
     ).fetchone()
     doc = security.unseal(row["doc"]) if row else None
     return Chapter(**json.loads(doc)) if doc else None
+
+
+def chapter_before(branch_id: str, revision: int, which: str, from_at: str) -> Optional[Chapter]:
+    """The latest finished chapter of this life that ends before `from_at`."""
+    rows = conn().execute(
+        "SELECT doc FROM chapters WHERE branch_id=? AND revision=? AND which=? AND status='ready' AND from_at<? "
+        "ORDER BY from_at DESC LIMIT 1", (branch_id, revision, which, from_at)).fetchall()
+    doc = security.unseal(rows[0]["doc"]) if rows else None
+    return Chapter(**json.loads(doc)) if doc else None
+
+
+def save_bible(branch_id: str, bible: dict) -> None:
+    _exec("INSERT OR REPLACE INTO bibles VALUES (?,?)", (branch_id, security.seal(json.dumps(bible))))
+
+
+def get_bible(branch_id: str) -> Optional[dict]:
+    row = conn().execute("SELECT doc FROM bibles WHERE branch_id=?", (branch_id,)).fetchone()
+    doc = security.unseal(row["doc"]) if row else None
+    return json.loads(doc) if doc else None
 
 
 # --- research feed ---
@@ -249,7 +284,7 @@ def erase_person(person_id: str) -> dict[str, int]:
         c = conn()
         branch_ids = [r["id"] for r in c.execute("SELECT id FROM branches WHERE person_id=?", (person_id,))]
         for bid in branch_ids:
-            for table in ("chapters", "research_steps", "narration", "narration_status"):
+            for table in ("chapters", "bibles", "research_steps", "narration", "narration_status"):
                 c.execute(f"DELETE FROM {table} WHERE branch_id=?", (bid,))
         counts["branches"] = len(branch_ids)
         for table in ("branches", "scenarios", "handles", "events", "evidence"):

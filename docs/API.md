@@ -296,3 +296,193 @@ with `forming: true` and their previous years still readable, and are rebuilt in
 the scenario is still forming. Background also runs under month horizons of twelve or more (one background year per
 twelve steps). `demo` evidence marked kind "researched" was really researched on its `retrieved_at` date and is stored in
 `backend/app/seed_data/demo_research.json`; rerun `python -m app.seed_research` to refresh it.
+
+## Scale, and dates instead of step counts
+
+```
+Scenario += { scale: "big" | "small" }   // big = a life decision (years, or six months and more, or the person says so);
+                                         // small = a day-to-day action or dilemma. Inferred in the same extraction call
+                                         // as the horizon; POST /scenarios accepts an optional `scale` override.
+```
+
+`BranchYear.label` is always a plain date derived from `at`: "21 September" (with the year when it is not the current
+year: "4 January 2027"), just the year on year-scale branches ("2031"), and "today" only for today's date — computed
+when read, so it is never stale. There is no "day 3", "week 2", "month 4", "tonight" or "tomorrow" anywhere: not in
+labels, compare checkpoints, chapter titles or chapter date captions, and the prompts that propose events and write
+narration are told to use dates too. (`Horizon.tonight` is still returned but no longer affects labels.)
+
+---
+
+# v2.3 — assistant conversation exports, and forgetting one offering
+
+- `/ingest` recognises exports of conversations with an AI assistant (Claude's or ChatGPT's
+  `conversations.json`, inside the export zip or on its own): input `kind: "ai_chat_export"`.
+  Only the person's **own** messages are read (newest conversations first, up to a few chunks —
+  the outcome says when older ones were left unread); the assistant's replies and the account
+  files in the zip (`users.json`, `projects.json`, …) are never read. The raw export is parsed in
+  memory and dropped. What is kept is the same as for any other source: structured events on main.
+- `LifeEvent.origin: string` — which offering an event came from (an upload's name, a URL,
+  `"your words"`).
+- `GET /inventory` adds `offerings: [{origin, count, newest, source}]`.
+- `POST /forget {person_id, origin}` → `{origin, removed}` removes everything on main that came
+  from that one offering (owner only; not available on `demo`). Narrower than `/erase`, same
+  principle. Re-offering the same file later adds the events back; offering it twice never
+  duplicates them (event ids are deterministic).
+
+---
+
+# v2.4 — a decision is written like a ticket
+
+`POST /scenarios` accepts `{person_id, text}`: one plain line (or a title line followed by
+`- option` lines), exactly as the person would write a ticket or a commit message. The situation
+and the 2–4 options are found inside it — by rules when the line lists them ("A, B, or C?",
+"A vs B"), otherwise by one small, fast extraction call (an implied yes/no becomes the action and
+not doing it). Horizon and big/small are judged by Hereafter. `situation` + explicit `options`
+still work; one explicit option now gets its implied alternative instead of a 422; an empty
+request is a 400.
+
+## Editing a decision ticket
+
+`POST /scenarios/{id}/edit` → `{scenario, branches}`. Body, any combination:
+
+```
+{ situation?: string,                         // rename the decision
+  scale?: "big" | "small",                    // stored as the person's choice: Scenario.scale_chosen = true, never re-inferred
+  rename?:   { [option_id]: string },         // renames the option AND its branch label; nothing is re-simulated
+  deadline?: { [option_id]: "YYYY-MM-DD" | null },   // sets/clears that branch's decide-by precondition; staleness is
+                                              // re-decided on the next read (a stale branch whose deadline moves reopens)
+  add?: [{ title }] }                         // up to four paths in total: each is a new placeholder branch (forming: true)
+                                              // that goes through the same background forming + research; siblings untouched
+```
+
+409 on a decided scenario, and for `add` while the scenario is still forming; 404 for an unknown option id; 400 for a bad
+date or a fifth path. Merge confirmation uses the branch's current (renamed) label.
+
+`Scenario += { scale_chosen: boolean }`. Scale is decided in code, after the LLM: the person's explicit scale always wins;
+otherwise a horizon under six months (26 weeks) is `small` and six months or more is `big`; the LLM's own opinion is used
+only when no horizon could be inferred at all; failing that, `small`. With the LLM off and no clue in the words, the
+horizon defaults to eight weeks (it used to default to forty years).
+
+---
+
+# v2.5 — probabilities, shown and explained
+
+The "no numbers" rule is withdrawn for likelihoods (the person asked for it): every possible
+event carries a probability, lists are ordered most to least likely, and every number can be
+opened to see exactly how it was made.
+
+```
+PossibleEvent += {
+  probability: number,          // 0..1: share of the 1,000 simulated lives in which it happens within the horizon
+  breakdown: {
+    base: { kind: "sourced" | "personal" | "estimated" | "background",
+            value: number,                    // the base probability over the event's window
+            range: [number, number] | null,   // the band it was sampled from (estimates, loose-fit sources)
+            evidence_id: string | null, reference_class: string | null, note: string },
+    personality: [{ trait: "O"|"C"|"E"|"A"|"N", trait_name: string, z: number, confidence: number,
+                    direction: 1 | -1, beta: number, shift_logodds: number, basis: "published" | "assumed" }],
+    dependencies: [{ on: string /* event key */, label: string, multiplier: number }],
+    adjusted: number,             // base after the personality shift, before dependencies and sampling
+    simulated: number             // = probability
+  }
+}
+BranchView.years[i].outlook[key] += { probability: number }    // cumulative by that step; `words` stays for compatibility
+```
+
+`GET /model` → `{version, summary, steps: [{title, text}], constants: [{name, value, meaning}],
+limits: string[]}` — the model card, in plain words, for a "how these numbers are made" panel.
+`GET /compare` rows and `distinctive` entries carry `probability` alongside `words`.
+
+## v2.5 as built (additive to the v2.5 section)
+
+```
+PossibleEvent += { base_probability: number|null,   // the sourced/personal base figure (what `probability` used to hold before v2.5)
+                   traits: [{trait, direction}],     // proposed directions only; hazard: a matching life-course transition or null
+                   terms:  [{trait, direction, beta, basis}] }   // what the engine actually applied (published beta, or the fixed 0.20)
+breakdown.dependencies[i] += { relation: "likelier"|"less_likely"|"prevents"|"requires", note }   // `requires` is a gate: multiplier 1.0
+breakdown += { simulated_note }                     // says whether it is "has happened by the horizon" or "at least once" (recurring)
+outlook[key].probability                            // cumulative for the option's own events; for background aspects (city, housing…)
+                                                    // it equals `share`: the share of lives with the value shown
+```
+
+`model.events` is sorted by `probability`, most likely first; the simulation itself uses a canonical order, so display
+order never changes the lives. `breakdown.base.value` for an estimate is the midpoint of `range`. `breakdown.personality`
+is `[]` when the person has no personality estimate or no trait bears on the event. Branches simulated before v2.5 are
+re-simulated once at startup (`revision` bumps). The demo person now has an MBTI type so its breakdowns show shifts.
+`GET /model` is open (no token); the same text is `docs/MODEL.md`.
+
+---
+
+# v2.6 — four running measures, shown as change from now
+
+Every path tracks four things as a **difference from where the person is now** (now = 0), never as
+an absolute score: `health`, `joy` (short-term happiness / dopamine), `fulfilment` (long-term), and
+`money`.
+
+```
+PossibleEvent += {
+  effects: { health: -2..2, joy: -2..2, fulfilment: -2..2, money: -2..2 },   // integers; 0 = no effect
+  money_amount: { value: number, currency: string, per: "once" | "month" | "year", evidence_id: string|null } | null,
+  effects_basis: "judgement" | "sourced"      // sourced only when money_amount comes from evidence or the person's own figures
+}
+
+Measure = "health" | "joy" | "fulfilment" | "money"
+Branch += {
+  measures: {
+    series: { [m in Measure]: [{ at: "YYYY-MM-DD", mean: number, low: number, high: number }] },  // per dated step; low/high = 10th–90th percentile of the 1,000 lives
+    end:    { [m in Measure]: { delta: number, low: number, high: number, marks: "−−−"|"−−"|"−"|"="|"+"|"++"|"+++" } },
+    money_end: { value: number, low: number, high: number, currency: string } | null   // only when amounts are known
+  }
+}
+Person += { money: { income: number|null, net_worth: number|null, currency: string } | null }   // optional, given by the person; encrypted at rest
+```
+
+- `POST /people` and `POST /ingest` accept optional `income`, `net_worth`, `currency`.
+- `GET /compare` adds `measures` per branch (the `end` block) so paths can be compared on the four.
+- `GET /model` explains how effects are assigned and accumulated (see docs/MODEL.md).
+
+## Path logic, as built (supersedes earlier notes where they differ)
+
+**Horizons and steps.** Small decisions run hours to a few weeks, evenly stepped. Big ones are modelled where they play out:
+`{unit: "years", count: 3}` by default, never more than 5 unless the person passes a `horizon`. Long paths (years, or 6+ months)
+step **weekly for the first month, monthly to the end of year one, then quarterly** (3 years = 23 steps). `BranchYear.label` is
+always a plain date ("19 June 2028"; year-only labels are gone). Each lived event has its own `date` inside its step (and inside
+its own window), never before what it follows — draw events at `event.date`, steps at `at`.
+
+**Step zero is the choice.** `model.events[0]` is `{key: "choice", head: true, basis: "choice", probability: 1, label: "You accept the
+offer"}`; it is the first lived event of every life (`payload.head: true`), dated at the decision. It is HEAD: `/merge` writes its
+label to main as the told-event's text. It is left out of `/compare` rows and `distinctive`.
+
+**A causal story.** `PossibleEvent += { phase: "right_away"|"settling_in"|"later", days: [from, to] /* days after the decision */,
+after: string[], requires: string[], head?: true }`. `after` = not before those happen (or their moment has passed); `requires` =
+never without them. Both are validated in code (unknown keys dropped, cycles cut, windows moved later, room left to follow) and
+enforced in every simulated life. A base chance means "given what it requires"; bins gained `"almost certainly"` (0.93–0.99) for
+the obvious first consequences. `breakdown.dependencies` lists `after`/`requires` with `relation` and `multiplier: 1.0`.
+`depends_on` relations are now only likelier / less_likely / prevents.
+
+**The life you read** is the modal life (see `GET /model`), not a medoid; `solidity` is now how settled the thousand lives are at
+that step (it no longer depends on which life is shown). `/lives?which=rare` needs at least three events beyond the choice.
+
+**Background** (life tables) is off unless `HEREAFTER_BACKGROUND=on`; with it off, `state` repeats the present and `outlook`
+holds only the option's own events.
+
+**Narration.** Each branch gets a stored story bible (setting, neighbourhood, two or three invented named people, real facts from
+main) and every `Chapter` carries `recap`; chapters are written in order (the next is only pre-written once the current one is
+ready), chapter one opens on step zero. Long paths chapter as: first month, rest of year one, then a year at a time.
+
+**Commits and nested decisions.** `POST /branches/{id}/commits` takes `{message, at|year}` or `{event_key, at}` ("assume this
+possibility happens": forced from `at`, or from the start of its window if later; message "<label> happens"; no LLM).
+`POST /scenarios` takes `assuming_at` with `assuming_branch_id`: the decision forks from that path's state at that date, carries what
+had already happened there as `Scenario.assumed_facts`, starts its branches at that date (`forked_at`), and returns `fork_at`.
+Undoing a commit dated on or before a nested decision's `fork_at` is refused with 409 and a plain reason.
+
+## v2.6 as built
+
+`Branch.measures` exactly as specified, plus `money_end.note` (the ledger in words, set against income or net worth when given).
+`money_end.currency` is the person's `money.currency` if set, otherwise the currency of the first known amount; only USD↔CAD is
+converted. `PossibleEvent += { effects, money_amount, effects_basis, money_kind }` (`money_kind` tells research which real figure
+would belong to the moment). `/compare` adds `measures: {[branch_id]: end}` and `money_end: {[branch_id]: money_end|null}`.
+`POST /people` and `/ingest` accept `income`, `net_worth`, `currency`; `/ingest` also picks them up from the person's own words
+when stated; `/trunk.person.money`, `/ingest.money` and `/inventory.money` return them. With the LLM off all effects are zero.
+`Scenario += { scale_chosen, assuming_at, fork_at, assumed_facts }`. The demo person now has three scenarios: `demo-offer` (big,
+three paths), `demo-tonight` (small, two paths) and `demo-farewell` (small, decided three weeks ago: one merged path, one faded).

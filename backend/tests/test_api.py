@@ -36,6 +36,13 @@ def new_scenario(client, pid, auth, options=OPTIONS):
     return post_scenario(client, auth, {"person_id": pid, "situation": "An offer arrived.", "options": options})
 
 
+def plain_date(at):
+    from datetime import date
+
+    d = date.fromisoformat(at)
+    return f"{d.day} {d:%B}" + ("" if d.year == date.today().year else f" {d.year}")
+
+
 def demo_branches(client, scenario_id="demo-offer"):
     views = client.get("/branches", params=DEMO).json()["branches"]
     return [v for v in views if v["branch"]["scenario_id"] == scenario_id]
@@ -47,12 +54,20 @@ def test_runs_with_llm_off_and_seeds_a_demo(client):
     trunk = client.get("/trunk", params=DEMO).json()
     assert trunk["events"] and trunk["state"]["city"] == "Waterloo"
     assert trunk["agent_log"], "retrieval agent choices are logged"
-    big, small = client.get("/scenarios", params=DEMO).json()["scenarios"]
-    assert (big["horizon"]["unit"], small["horizon"]) == ("years", {"unit": "days", "count": 7, "tonight": True})
+    big, small, earlier = client.get("/scenarios", params=DEMO).json()["scenarios"]   # open ones first, soonest deadline first
+    assert (big["horizon"], small["horizon"]) == ({"unit": "years", "count": 3, "tonight": False}, {"unit": "days", "count": 7, "tonight": True})
+    assert (big["scale"], small["scale"], earlier["scale"]) == ("big", "small", "small")
     branches = demo_branches(client)
-    assert len(branches) == 2 == len(big["options"]) and all(b["years"] for b in branches)
+    assert len(branches) == 3 == len(big["options"]) and all(b["years"] for b in branches)
     assert {b["branch"]["id"] for b in branches} == set(big["branch_ids"])
     assert client.get("/narration", params={"branch_id": branches[0]["branch"]["id"]}).json()["lines"] == {}
+    # one earlier decision is already made: a chosen path, a road not taken, and the choice on main in the words of step zero
+    went, packed = demo_branches(client, "demo-farewell")
+    assert (earlier["status"], went["branch"]["status"], packed["branch"]["status"]) == ("decided", "merged", "faded")
+    decision = next(e for e in trunk["events"] if e["event_type"] == "decision")
+    assert decision["text"] == "You go to the team's farewell dinner" and decision["date"] == went["branch"]["forked_at"]
+    statuses = {b["branch"]["status"] for b in client.get("/branches", params=DEMO).json()["branches"]}
+    assert statuses == {"open", "merged", "faded"}, "nothing stale, nothing nested, nothing picked"
 
 
 def test_tokens_are_enforced(client):
@@ -93,41 +108,43 @@ def test_past_is_append_only(client):
     assert not any(m in ("PUT", "PATCH", "DELETE") for m, _ in routes)
 
 
-def test_scenario_makes_one_branch_per_option_from_the_persons_words(client):
+def test_scenario_makes_one_branch_per_option_from_the_persons_words(background, client):
     pid, auth = new_person(client, birth_year=2003)
     made = new_scenario(client, pid, auth)
     offer, masters = made["branches"]
     assert offer["branch"]["assumption"]["city"] == "San Francisco" and offer["branch"]["params"]["salary"] > 165000
     assert offer["branch"]["precondition"] == "decide_by: 2030-01-01" and offer["branch"]["option_id"]
     assert masters["branch"]["assumption"]["employment"] == "student" and masters["branch"]["params"]["graduates_in"] == 2
-    assert masters["years"][0]["state"]["employment"] == "student" and masters["years"][3]["state"]["employment"] == "employed"
-    too_few = client.post("/scenarios", json={"person_id": pid, "situation": "x", "options": OPTIONS[:1]}, headers=auth)
-    assert too_few.status_code == 422
+    assert masters["years"][0]["state"]["employment"] == "student" and masters["years"][-1]["state"]["employment"] == "employed"
+    # one named option is enough: the alternative (not doing it) is implied, as in a plain ticket
+    one = client.post("/scenarios", json={"person_id": pid, "situation": "Lend my brother the money?", "options": OPTIONS[:1]}, headers=auth)
+    assert one.status_code == 200 and len(one.json()["branches"]) == 2
+    assert client.post("/scenarios", json={"person_id": pid, "situation": ""}, headers=auth).status_code == 400
 
 
 def test_outlook_says_how_settled_each_aspect_is(client):
     year = demo_branches(client)[0]["years"]
     first, last = year[0]["outlook"], year[-1]["outlook"]
-    assert {"alive", "city", "employment", "income_band", "relationship", "housing", "children"} <= set(first)
-    assert "promoted_to_senior" in first, "the option's own outcomes sit beside the background aspects"
+    assert "promoted" in first and "city" not in first, "the option's own outcomes; the life-table background is off by default"
     allowed = {"almost always", "usually", "as often as not", "sometimes", "rarely"}
-    assert all(o["words"] in allowed and 0 <= o["share"] <= 1 and o["value"] for o in first.values())
-    assert first["alive"]["words"] == "almost always" and first["alive"]["share"] > last["alive"]["share"]
+    assert all(o["words"] in allowed and 0 <= o["share"] <= 1 and o["value"] in ("yes", "no") for o in first.values())
+    assert first["choice"]["probability"] == 1.0 and first["promoted"]["probability"] == 0.0 < last["promoted"]["probability"]
 
 
-def test_commit_changes_the_future_and_undo_restores_it_exactly(client):
+def test_commit_changes_the_future_and_undo_restores_it_exactly(background, client):
     pid, auth = new_person(client, birth_year=2003)
     branch = new_scenario(client, pid, auth)["branches"][0]
     bid = branch["branch"]["id"]
+    year = int(branch["years"][0]["at"][:4]) + 2
 
     def shape(view):
-        return [(y["year"], y["solidity"], y["state"], [e["text"] for e in y["events"]]) for y in view["years"]]
+        return [(y["at"], y["solidity"], y["state"], [e["text"] for e in y["events"]]) for y in view["years"]]
 
-    committed = client.post(f"/branches/{bid}/commits", json={"year": 2031, "message": "Move back to Toronto"}, headers=auth).json()
+    committed = client.post(f"/branches/{bid}/commits", json={"year": year, "message": "Move back to Toronto"}, headers=auth).json()
     assert committed["branch"]["revision"] == 2 and committed["branch"]["commits"][0]["patch"]["city"] == "Toronto"
-    in_2031 = next(y for y in committed["years"] if y["year"] == 2031)
-    assert in_2031["state"]["city"] == "Toronto" and in_2031["events"][0]["event_type"] == "commit"
-    assert committed["branch"]["commits"][0]["at"] == "2031-01-01"
+    landed = next(y for y in committed["years"] if y["year"] == year)
+    assert landed["state"]["city"] == "Toronto" and landed["events"][0]["event_type"] == "commit"
+    assert committed["branch"]["commits"][0]["at"] == landed["at"]
     assert shape(committed) != shape(branch)
     assert client.get("/trunk", params={"person_id": pid}, headers=auth).json()["events"] == []  # main untouched
 
@@ -158,39 +175,43 @@ def test_merge_needs_the_name_is_permanent_and_stale_cannot_merge(client):
 
     # permanent: no second merge, no commits or undo on closed paths, and no route that reverses it
     assert client.post("/merge", json={"branch_id": offer["id"], "confirm": "Take the offer"}, headers=auth).status_code == 409
-    assert client.post(f"/branches/{masters['id']}/commits", json={"year": 2030, "message": "x"}, headers=auth).status_code == 409
+    assert client.post(f"/branches/{masters['id']}/commits", json={"year": 2028, "message": "x"}, headers=auth).status_code == 409
     main = client.get("/trunk", params={"person_id": pid}, headers=auth).json()["events"]
     assert [e["event_type"] for e in main] == ["decision"]
+    assert main[0]["text"] == "You stay for the master's", "HEAD is what a merge commits: main records step zero's words"
 
-    faded_events = [e for y in made["branches"][0]["years"] for e in y["events"]]
+    client.post(f"/branches/{offer['id']}/undo", json={}, headers=auth)  # closed: refused, nothing changes
+    faded_events = [e for y in made["branches"][0]["years"] for e in y["events"]] + [{"id": "missing"}]
     carried = client.post("/carry", json={"branch_id": offer["id"], "event_id": faded_events[0]["id"]}, headers=auth)
     assert carried.status_code == 200 and carried.json()["goal_event"]["event_type"] == "goal"
     assert client.post("/carry", json={"branch_id": offer["id"], "event_id": faded_events[1]["id"]}, headers=auth).status_code == 409
 
 
 def test_compare_aligns_branches_and_marks_differences(client):
-    a, b = (v["branch"]["id"] for v in demo_branches(client))
-    result = client.get("/compare", params={"a": a, "b": b}).json()
-    assert [c["year"] - result["checkpoints"][0]["year"] for c in result["checkpoints"][:3]] == [0, 5, 10]
-    first = {r["aspect"]: r for r in result["checkpoints"][0]["rows"]}
-    assert first["city"]["differs"] and {v["value"] for v in first["city"]["values"]} == {"San Francisco", "Waterloo"}
-    assert not first["alive"]["differs"] and all(v["words"] for v in first["alive"]["values"])
+    a, b, c = (v["branch"]["id"] for v in demo_branches(client))
+    result = client.get("/compare", params={"a": a, "b": b, "c": c}).json()
+    assert len(result["checkpoints"]) == 4 and result["checkpoints"][0]["label"] == "today"
+    last = {r["aspect"]: r for r in result["checkpoints"][-1]["rows"]}
+    assert {"first_day_at_work", "first_real_friend_there", "regret_the_choice"} <= set(last) and "choice" not in last
+    work = {v["branch_id"]: v["probability"] for v in last["first_day_at_work"]["values"]}
+    assert work[a] > work[b] and last["first_day_at_work"]["differs"], "a job starts sooner than a degree ends"
+    assert all(d["key"] != "choice" for d in result["distinctive"])
 
 
 def test_chapters_and_evidence_work_without_the_llm(client):
     branch = demo_branches(client)[0]
-    bid, first_year = branch["branch"]["id"], branch["years"][0]["year"]
-    opening = client.get("/chapters", params={"branch_id": bid, "year": first_year}).json()
-    assert opening["status"] == "ready" and (opening["from_year"], opening["to_year"]) == (first_year, first_year + 1)
-    later = client.get("/chapters", params={"branch_id": bid, "year": first_year + 4}).json()
-    assert (later["from_year"], later["to_year"]) == (first_year + 2, first_year + 6) and len(later["paragraphs"]) == 5
+    bid, years = branch["branch"]["id"], branch["years"]
+    opening = client.get("/chapters", params={"branch_id": bid, "at": years[0]["at"]}).json()
+    assert opening["status"] == "ready" and (opening["from_at"], opening["to_at"]) == (years[0]["at"], years[3]["at"]), "the first month"
+    assert opening["paragraphs"][0]["text"].startswith("today — You accept the San Francisco offer"), "chapter one opens on step zero"
+    later = client.get("/chapters", params={"branch_id": bid, "at": years[9]["at"]}).json()
+    assert (later["from_at"], later["to_at"]) == (years[4]["at"], years[14]["at"]) and len(later["paragraphs"]) == 11, "the rest of year one"
+    yearly = client.get("/chapters", params={"branch_id": bid, "at": years[-1]["at"]}).json()
+    assert (yearly["from_at"], yearly["to_at"]) == (years[19]["at"], years[22]["at"]), "then a year at a time"
 
     evidence = client.get("/evidence", params={"branch_id": bid}).json()["evidence"]
-    kinds = {e["kind"] for e in evidence}
-    assert {"researched", "statistic"} <= kinds
-    stat = next(e for e in evidence if e["kind"] == "statistic")
-    assert "Statistics Canada" in stat["source_title"] and stat["source_url"].startswith("https://www150.statcan")
-    cited = {i for ch in (opening, later) for p in ch["paragraphs"] for i in p["evidence_ids"]}
+    assert {e["kind"] for e in evidence} == {"researched"}, "no life-table statistics unless the background is switched on"
+    cited = {i for ch in (opening, later, yearly) for p in ch["paragraphs"] for i in p["evidence_ids"]}
     assert cited <= {e["id"] for e in evidence}
     assert client.get("/research", params={"branch_id": bid}).json()["research"] in ("none", "done")  # "done" when stored research exists
 
@@ -199,7 +220,7 @@ def test_chapter_prose_is_encrypted_at_rest(client):
     from app import db
 
     branch = demo_branches(client)[0]
-    chapter = client.get("/chapters", params={"branch_id": branch["branch"]["id"], "year": branch["years"][0]["year"]}).json()
+    chapter = client.get("/chapters", params={"branch_id": branch["branch"]["id"], "at": branch["years"][0]["at"]}).json()
     stored = db.conn().execute("SELECT doc FROM chapters").fetchone()["doc"]
     assert chapter["paragraphs"][0]["text"][:12] not in stored
 
@@ -266,14 +287,14 @@ def test_inventory_then_erase_leaves_nothing(client):
     pid, auth = new_person(client, display_name="Sam")
     client.post("/ingest", data={"person_id": pid, "text": "I moved to Waterloo in 2021."}, headers=auth)
     branch = new_scenario(client, pid, auth)["branches"][0]["branch"]["id"]
-    client.get("/chapters", params={"branch_id": branch, "year": 2030}, headers=auth)
+    client.get("/chapters", params={"branch_id": branch, "year": 2027}, headers=auth)
 
     inventory = client.get("/inventory", params={"person_id": pid}, headers=auth).json()
     assert {s["source"] for s in inventory["sources"]} == {"told", "simulated"} and inventory["stored_nowhere"]
 
     assert client.post("/erase", json={"person_id": pid, "confirm": "yes"}, headers=auth).status_code == 400
     erased = client.post("/erase", json={"person_id": pid, "confirm": "erase"}, headers=auth).json()["erased"]
-    assert erased["events"] > 0 and erased["evidence"] > 0 and erased["branches"] == 2
+    assert erased["events"] > 0 and erased["branches"] == 2
     assert get_store().events(pid) == [] and get_store().evidence(pid) == [] and db.list_branches(pid) == []
     for table in ("people", "scenarios", "branches", "events", "evidence", "handles"):
         column = "id" if table == "people" else "person_id"
@@ -302,13 +323,13 @@ def test_concurrent_reads_do_not_fail_or_blank_the_person(client):
 
 def test_a_small_decision_is_lived_in_days_with_the_llm_off(client):
     going, staying = demo_branches(client, "demo-tonight")
-    assert [y["label"] for y in going["years"][:3]] == ["tonight", "tomorrow", "day 3"]
+    assert [y["label"] for y in going["years"][:3]] == ["today", plain_date(going["years"][1]["at"]), plain_date(going["years"][2]["at"])]
     assert going["years"][0]["at"] == going["branch"]["forked_at"] and len(going["years"]) == 7
     model = going["branch"]["model"]["events"]
-    assert len(model) >= 8 and {e["basis"] for e in model} <= {"estimated", "sourced"}
-    assert all(e["words"] in ("rare", "sometimes", "as often as not", "usually", "almost always", "rarely") for e in model)
+    assert len(model) >= 8 and {e["basis"] for e in model} <= {"estimated", "sourced", "choice"}
+    assert all(e["words"] in ("rare", "sometimes", "as often as not", "usually", "almost always", "almost certainly", "rarely") for e in model)
     happened = [e for y in going["years"] for e in y["events"]]
-    assert happened and all(e["payload"]["basis"] in ("estimated", "sourced") for e in happened)
+    assert happened and all(e["payload"]["basis"] in ("estimated", "sourced", "choice") for e in happened)
     assert not any(e["payload"].get("basis") == "background" for e in happened), "no life-course on a short horizon"
     outlook = going["years"][-1]["outlook"]
     assert "sleep_under_five_hours" in outlook and "city" not in outlook
@@ -316,7 +337,7 @@ def test_a_small_decision_is_lived_in_days_with_the_llm_off(client):
     bid = going["branch"]["id"]
     night = client.get("/chapters", params={"branch_id": bid, "at": going["years"][0]["at"]}).json()
     assert night["status"] == "ready" and night["from_at"] == going["years"][0]["at"] and len(night["paragraphs"]) == 7
-    assert night["paragraphs"][0]["text"].startswith("tonight — ")
+    assert night["paragraphs"][0]["text"].startswith("today — ") and "day 7" not in night["title"]
 
 
 def test_commit_on_a_small_decision_forces_an_event_and_undo_restores_it(client):
@@ -331,7 +352,7 @@ def test_commit_on_a_small_decision_forces_an_event_and_undo_restores_it(client)
     patch = committed["branch"]["commits"][0]["patch"]
     assert patch["step"] == 0 and patch["model"]["force"] == ["home_by_eleven"]
     first = committed["years"][0]
-    assert first["events"][0]["event_type"] == "commit" and "home_by_eleven" in [e["event_type"] for e in first["events"]]
+    assert [e["event_type"] for e in first["events"]][:2] == ["choice", "commit"] and "home_by_eleven" in [e["event_type"] for e in first["events"]]
     assert first["outlook"]["home_by_eleven"]["share"] == 1.0
     undone = client.post(f"/branches/{bid}/undo", json={}).json()
     assert shape(undone) == shape(going)
@@ -340,7 +361,8 @@ def test_commit_on_a_small_decision_forces_an_event_and_undo_restores_it(client)
 def test_compare_shows_shared_outcomes_and_what_is_distinctive(client):
     going, staying = demo_branches(client, "demo-tonight")
     result = client.get("/compare", params={"a": going["branch"]["id"], "b": staying["branch"]["id"]}).json()
-    assert [c["label"] for c in result["checkpoints"]][0] == "tonight" and result["checkpoints"][-1]["label"] == "day 7"
+    assert [c["label"] for c in result["checkpoints"]][0] == "today"
+    assert result["checkpoints"][-1]["label"] == plain_date(going["years"][-1]["at"])
     rows = {r["aspect"]: r for r in result["checkpoints"][-1]["rows"]}
     assert {"sleep_under_five_hours", "problem_set_on_time", "regret_next_morning"} <= set(rows)
     sleep = {v["branch_id"]: v["share"] for v in rows["sleep_under_five_hours"]["values"]}
@@ -377,10 +399,14 @@ def test_horizon_can_be_given_and_is_inferred_by_rules_without_the_llm(client):
     options = [{"title": "Text them tonight", "details": ""}, {"title": "Leave it", "details": ""}]
     made = post_scenario(client, auth, {"person_id": pid, "situation": "Should I text my ex tonight?", "options": options})
     assert made["scenario"]["horizon"] == {"unit": "days", "count": 7, "tonight": True}
-    assert made["branches"][0]["years"][0]["label"] == "tonight" and made["branches"][0]["branch"]["model"]["events"] == []
+    assert made["branches"][0]["years"][0]["label"] == "today"
+    only = made["branches"][0]["branch"]["model"]["events"]
+    assert [(e["key"], e["label"], e["head"], e["probability"]) for e in only] == [("choice", "You text them tonight", True, 1.0)]
+    assert made["scenario"]["scale"] == "small"
     fixed = post_scenario(client, auth, {"person_id": pid, "situation": "Should I text my ex tonight?", "options": options,
                                             "horizon": {"unit": "weeks", "count": 6}})
-    assert [y["label"] for y in fixed["branches"][0]["years"]] == ["this week", "week 2", "week 3", "week 4", "week 5", "week 6"]
+    weeks = fixed["branches"][0]["years"]
+    assert [y["label"] for y in weeks] == ["today"] + [plain_date(y["at"]) for y in weeks[1:]]
 
 
 # --- the background tables are weather, not plot (DECISIONS 2.5a) ---
@@ -388,7 +414,7 @@ def test_horizon_can_be_given_and_is_inferred_by_rules_without_the_llm(client):
 LIFE_SCRIPT = {"marriage", "divorce", "widowed", "birth", "home_purchase"}
 
 
-def test_life_script_events_are_opt_in(client):
+def test_life_script_events_are_opt_in(background, client):
     pid, auth = new_person(client, birth_year=1996)
     plain = new_scenario(client, pid, auth)["branches"][0]
     assert plain["branch"]["model"]["life_script"] == {"partner": False, "children": False, "home": False}
@@ -404,22 +430,26 @@ def test_life_script_events_are_opt_in(client):
     assert all(y["state"]["children"] == 0 for y in wanted["years"])
 
 
-def test_background_stays_a_small_share_and_gives_way_to_the_options_own_events(client):
+def test_background_is_off_by_default_and_a_small_share_when_on(background, client):
     offer = demo_branches(client)[0]
     events = [e for y in offer["years"] for e in y["events"]]
     own = [e for e in events if e["payload"].get("basis") != "background"]
-    background = [e for e in events if e["payload"].get("basis") == "background"]
-    assert own and background and len(background) <= max(2, -(-len(own) // 3))
+    behind = [e for e in events if e["payload"].get("basis") == "background"]
+    assert own and len(behind) <= max(2, -(-len(own) // 3)) and "city" in offer["years"][0]["outlook"]
     for year in offer["years"]:
         families = {"career" if e["domain"] in ("work", "learning") else e["domain"] for e in year["events"]
                     if e["payload"].get("basis") != "background"}
         clash = [e for e in year["events"] if e["payload"].get("basis") == "background" and e["domain"] in families
                  and e["event_type"] not in ("death", "parent_death")]
         assert not clash
-    evidence = {e["id"]: e for e in client.get("/evidence", params={"branch_id": offer["branch"]["id"]}).json()["evidence"]}
-    cited = [evidence[e["payload"]["evidence_id"]] for e in background if e["payload"].get("evidence_id") in evidence]
-    assert cited and all(c["reference_class"] == "Canadians of this age, national average" and c["gap"] for c in cited)
-    assert "outside Canada" in cited[0]["gap"], "San Francisco: the Canadian tables stay on only with the gap stated"
+    evidence = [e for e in client.get("/evidence", params={"branch_id": offer["branch"]["id"]}).json()["evidence"] if e["kind"] == "statistic"]
+    assert all(c["reference_class"] == "Canadians of this age, national average" and "outside Canada" in c["gap"] for c in evidence)
+
+
+def test_no_background_events_unless_switched_on(client):
+    for view in demo_branches(client):
+        assert not any(e["payload"].get("basis") == "background" for y in view["years"] for e in y["events"])
+        assert "city" not in view["years"][-1]["outlook"]
 
 
 # --- questions, answers, and many scenarios at once (v2.2) ---
@@ -429,13 +459,13 @@ def canned_proposal(question=True):
     from app import llm
 
     def event(key, label, follow=False):
-        return llm.ProposedEvent(key=key, label=label, domain="learning", kind="one_time", first_step=0, last_step=3,
+        return llm.ProposedEvent(key=key, label=label, domain="learning", kind="one_time", phase="settling_in", from_day=30, to_day=900,
                                  bin="sometimes", depends_on=[], reference_class=None, search_query=None, follow_through=follow)
 
     return llm.ProposedScenario(
         horizon_unit="years", horizon_count=6, starts_tonight=False,
-        options=[llm.ProposedOption(option_index=0, events=[event("coop_term", "you land a co-op term"), event("finish_degree", "you finish the degree", True)]),
-                 llm.ProposedOption(option_index=1, events=[event("commute_from_home", "you commute from home"), event("finish_degree", "you finish the degree", True)])],
+        options=[llm.ProposedOption(option_index=0, choice_label="You choose Waterloo", events=[event("coop_term", "you land a co-op term"), event("finish_degree", "you finish the degree", True)]),
+                 llm.ProposedOption(option_index=1, choice_label="You choose McMaster", events=[event("commute_from_home", "you commute from home"), event("finish_degree", "you finish the degree", True)])],
         questions=[llm.ProposedQuestion(text="What do you intend to major in?", why="co-op and outcomes differ by program",
                                         choices=["Computer science", "Life sciences", "Undecided"], applies_to_options=[])] if question else [],
     )
@@ -469,7 +499,7 @@ def test_questions_widen_branches_until_answered_and_are_never_asked_twice(clien
     assert later["questions"] == [], "main now knows the major, so it is not asked again"
 
 
-def test_a_scenario_can_assume_a_branch_and_scenarios_list_soonest_first(client, monkeypatch):
+def test_a_scenario_can_assume_a_branch_and_scenarios_list_soonest_first(background, client, monkeypatch):
     from app import llm
 
     monkeypatch.setattr(llm, "propose_scenario_model", lambda *a, **k: canned_proposal(question=False))
@@ -509,7 +539,7 @@ def test_a_personal_track_record_is_used_only_when_there_is_enough_of_it(client,
     model = enough["branches"][0]["branch"]["model"]
     finish = next(e for e in model["events"] if e["key"] == "finish_degree")
     assert model["mix"] == {"sourced": 0, "personal": 1, "estimated": 1} and finish["basis"] == "personal"
-    assert finish["probability"] == round(4 / 6, 4) and finish["band"] > 0
+    assert finish["base_probability"] == round(4 / 6, 4) and finish["band"] > 0
     record = client.get("/evidence", params={"ids": finish["evidence_id"], "person_id": pid}, headers=auth).json()["evidence"][0]
     assert record["kind"] == "personal" and record["value"] == "4 of 6" and record["gap"]
 
@@ -526,17 +556,19 @@ def test_forming_is_narrated_and_blocks_nothing_but_the_unformed(client):
     assert any("could happen here" in s["message"] for s in steps)
 
 
-def test_background_runs_under_long_month_horizons_only(client):
+def test_background_runs_under_long_month_horizons_only(background, client):
     pid, auth = new_person(client, birth_year=1990)
     body = lambda count: {"person_id": pid, "situation": "Train for a marathon or not?", "options": UNIS,
                           "horizon": {"unit": "months", "count": count}}
     long = post_scenario(client, auth, body(18))["branches"][0]
-    assert len(long["years"]) == 18 and long["years"][0]["label"] == "this month" and "city" in long["years"][0]["outlook"]
-    assert long["years"][11]["state"]["age"] + 1 == long["years"][12]["state"]["age"], "one background year per twelve steps"
-    dated = [(y["at"][:7], e["date"][:7]) for y in long["years"] for e in y["events"]]
-    assert all(a == b for a, b in dated)
-    short = post_scenario(client, auth, body(6))["branches"][0]
-    assert "city" not in short["years"][0]["outlook"]
+    years = long["years"]
+    assert len(years) == 4 + 11 + 2 and years[0]["label"] == "today" and "city" in years[0]["outlook"], \
+        "weekly for a month, monthly to the end of year one, then quarterly"
+    assert years[0]["state"]["age"] + 1 == years[-1]["state"]["age"], "one background year per twelve months"
+    for this, after in zip(years, years[1:]):
+        assert all(this["at"] <= e["date"] < after["at"] for e in this["events"]), "every moment is dated inside its own step"
+    short = post_scenario(client, auth, body(5))["branches"][0]
+    assert "city" not in short["years"][0]["outlook"] and len(short["years"]) == 5
 
 
 def test_the_demo_carries_real_stored_research_rechecked_at_seed_time(client):
@@ -555,3 +587,276 @@ def test_the_demo_carries_real_stored_research_rechecked_at_seed_time(client):
         assert evidence["source_url"] == rate["source_url"] and evidence["retrieved_at"] == rate["retrieved_at"] and evidence["gap"]
     offer = branches["demo-offer|Take the offer"]["branch"]
     assert offer["params"]["housing_cost_ratio"] == stored["branches"]["demo-offer|Take the offer"]["params"]["housing_cost_ratio"]
+
+
+def test_step_labels_are_plain_dates_everywhere(client):
+    import re
+
+    counted = re.compile(r"\b(day|week|month) \d+\b|\b(this week|this month|tonight|tomorrow)\b", re.I)
+    for view in client.get("/branches", params=DEMO).json()["branches"]:
+        bid, unit = view["branch"]["id"], view["branch"]["span"]["unit"]
+        labels = [y["label"] for y in view["years"]] + [y["label"] for y in client.get("/lives", params={"branch_id": bid, "which": "rare"}).json()["years"]]
+        assert labels and not any(counted.search(l) for l in labels)
+        assert labels[0] == ("today" if view["branch"]["forked_at"] == view["years"][0]["at"] == str(__import__("datetime").date.today()) else plain_date(view["years"][0]["at"]))
+        assert all(l == "today" or re.fullmatch(r"\d{1,2} [A-Z][a-z]+( \d{4})?", l) for l in labels)
+        chapter = client.get("/chapters", params={"branch_id": bid, "at": view["years"][0]["at"]}).json()
+        assert not counted.search(chapter["title"]) and not any(counted.search(p["text"].split(" — ")[0]) for p in chapter["paragraphs"])
+
+
+def test_today_is_only_ever_today():
+    from datetime import date, timedelta
+    from app.sim.outcomes import date_label
+
+    day = date(2026, 9, 19)
+    assert date_label(day, "days", today=day) == "today" and date_label(day, "days", today=day + timedelta(days=1)) == "19 September"
+    assert date_label(date(2027, 1, 4), "weeks", today=day) == "4 January 2027"
+    assert date_label(date(2028, 6, 19), "years", today=day) == "19 June 2028", "long paths have steps inside a year, so they are dated too"
+
+
+def test_scale_is_inferred_and_can_be_overridden(client, monkeypatch):
+    from app import llm
+
+    pid, auth = new_person(client, birth_year=2003)
+    assert new_scenario(client, pid, auth)["scenario"]["scale"] == "big"           # years
+    body = {"person_id": pid, "situation": "Should I text my ex tonight?", "options": UNIS}
+    assert post_scenario(client, auth, body)["scenario"]["scale"] == "small"
+    assert post_scenario(client, auth, {**body, "scale": "big"})["scenario"]["scale"] == "big", "the person says so"
+    assert post_scenario(client, auth, {**body, "horizon": {"unit": "months", "count": 6}})["scenario"]["scale"] == "big"
+    proposal = canned_proposal(question=False).model_copy(update={"horizon_unit": "weeks", "horizon_count": 4, "scale": "big"})
+    monkeypatch.setattr(llm, "propose_scenario_model", lambda *a, **k: proposal)
+    assert post_scenario(client, auth, {**body, "situation": "Leave the band?"})["scenario"]["scale"] == "small", \
+        "four weeks is small whatever the LLM thinks"
+
+
+def _claude_export():
+    import json as _json
+    return _json.dumps([
+        {"uuid": "c1", "name": "Should I take the Montreal internship", "created_at": "2026-08-01T10:00:00Z",
+         "updated_at": "2026-08-02T10:00:00Z", "chat_messages": [
+             {"sender": "human", "text": "I got an internship offer in Montreal but my partner is staying in Waterloo.", "created_at": "2026-08-01T10:00:00Z"},
+             {"sender": "assistant", "text": "ASSISTANT WORDS THAT MUST NEVER BE READ", "created_at": "2026-08-01T10:00:05Z"}]},
+        {"uuid": "c2", "name": "empty", "created_at": "2026-07-01T10:00:00Z", "updated_at": "2026-07-01T10:00:00Z", "chat_messages": []},
+    ])
+
+
+def test_assistant_export_reads_only_the_persons_side(client):
+    from app.ingest import ai_chat
+    from app.ingest.router import route_file
+
+    convs = ai_chat.parse(_claude_export())
+    assert [c.title for c in convs] == ["Should I take the Montreal internship"]
+    chunks, unread = ai_chat.chunks_for_extraction(convs)
+    assert unread == 0 and "Montreal" in chunks[0] and "ASSISTANT WORDS" not in chunks[0]
+
+    offered = route_file("conversations.json", _claude_export().encode())
+    assert offered[0].kind == "ai_chat_export" and offered[0].text == ""   # raw JSON is not carried along
+    assert ai_chat.parse('{"not": "an export"}') is None
+
+
+def test_an_offering_can_be_forgotten_on_its_own(client):
+    person = client.post("/people", json={}).json()
+    headers = {"Authorization": f"Bearer {person['token']}"}
+    pid = person["person_id"]
+    client.post("/ingest", data={"person_id": pid, "text": "I moved to Halifax last spring."}, headers=headers)
+    resp = client.post("/ingest", data={"person_id": pid}, headers=headers,
+                       files=[("files", ("conversations.json", _claude_export().encode(), "application/json"))])
+    kinds = {i["name"]: i["kind"] for i in resp.json()["inputs"]}
+    assert kinds["conversations.json"] == "ai_chat_export"
+
+    offerings = {o["origin"]: o["count"] for o in client.get("/inventory", params={"person_id": pid}, headers=headers).json()["offerings"]}
+    assert {"your words", "conversations.json"} <= set(offerings)
+
+    forgot = client.post("/forget", json={"person_id": pid, "origin": "conversations.json"}, headers=headers).json()
+    assert forgot["removed"] == offerings["conversations.json"]
+    left = {e["origin"] for e in client.get("/trunk", params={"person_id": pid}, headers=headers).json()["events"]}
+    assert "conversations.json" not in left and "your words" in left
+    assert client.post("/forget", json={"person_id": pid, "origin": "your words"}).status_code in (401, 403)
+
+
+def test_a_decision_is_written_like_a_ticket():
+    from app import ticket
+
+    s, o = ticket.parse("Noor texted for the first time since March. Answer tonight, in the morning, or not at all?")
+    assert o == ["Answer tonight", "In the morning", "Not at all"] and s.startswith("Noor texted")
+    assert ticket.parse("McMaster vs Waterloo vs UofT")[1] == ["McMaster", "Waterloo", "UofT"]
+    assert ticket.parse("Friday\n- the party\n- the problem set")[1] == ["The party", "The problem set"]
+    assert len(ticket.parse("Lend my brother the money?")[1]) == 2
+
+
+def test_post_scenarios_takes_one_plain_line(client):
+    made = client.post("/scenarios", headers={"Authorization": "Bearer demo"},
+                       json={"person_id": "demo", "text": "The party on Friday or the problem set due Saturday?"}).json()
+    assert [o["title"] for o in made["scenario"]["options"]] == ["The party on Friday", "The problem set due Saturday"]
+    assert len(made["branches"]) == 2
+
+
+LENDING = "Inès asked to borrow four hundred"
+LEND_OPTIONS = [{"title": "Lend it", "details": ""}, {"title": "Say no", "details": ""}]
+
+
+def test_lending_four_hundred_is_a_small_decision_with_and_without_the_llm(client, monkeypatch):
+    from app import llm, outcome_model
+    from app.models import Horizon
+
+    pid, auth = new_person(client, birth_year=1995)
+    body = {"person_id": pid, "situation": LENDING, "options": LEND_OPTIONS}
+    off = post_scenario(client, auth, body)["scenario"]                       # LLM off: nothing to infer a horizon from
+    assert off["scale"] == "small" and off["horizon"]["unit"] == "weeks"
+
+    says_big = canned_proposal(question=False).model_copy(update={"horizon_unit": "months", "horizon_count": 3, "scale": "big"})
+    monkeypatch.setattr(llm, "propose_scenario_model", lambda *a, **k: says_big)
+    assert post_scenario(client, auth, body)["scenario"]["scale"] == "small", "three months: small, whatever the LLM says"
+    chosen = post_scenario(client, auth, {**body, "scale": "big"})["scenario"]
+    assert chosen["scale"] == "big" and chosen["scale_chosen"], "the person's explicit scale always wins"
+
+    assert [outcome_model.scale_of(Horizon(unit=u, count=c)) for u, c in
+            (("days", 30), ("weeks", 25), ("weeks", 26), ("months", 5), ("months", 6), ("years", 1))] == \
+        ["small", "small", "big", "small", "big", "big"]
+    assert outcome_model.decide_scale(None, None, "big") == "big" and outcome_model.decide_scale(None, None, None) == "small"
+    assert outcome_model.decide_scale("small", Horizon(unit="years", count=40), "big") == "small"
+
+
+def test_editing_a_decision_ticket(client):
+    pid, auth = new_person(client, birth_year=2003)
+    made = new_scenario(client, pid, auth)
+    sid = made["scenario"]["id"]
+    offer, masters = made["branches"]
+    oid, mid = offer["branch"]["option_id"], masters["branch"]["option_id"]
+    edit = lambda body, headers=auth: client.post(f"/scenarios/{sid}/edit", json=body, headers=headers)
+
+    r = edit({"situation": "The San Francisco question", "scale": "small"}).json()
+    assert r["scenario"]["situation"] == "The San Francisco question" and r["scenario"]["scale"] == "small" and r["scenario"]["scale_chosen"]
+
+    r = edit({"rename": {oid: "Go west"}}).json()
+    renamed = next(b for b in r["branches"] if b["branch"]["option_id"] == oid)
+    assert renamed["branch"]["label"] == "Go west" and renamed["branch"]["revision"] == offer["branch"]["revision"], "no re-simulation"
+    assert renamed["years"] == offer["years"] and next(o for o in r["scenario"]["options"] if o["id"] == oid)["title"] == "Go west"
+
+    r = edit({"deadline": {oid: "2020-01-01", mid: "2031-05-01"}}).json()
+    assert {b["branch"]["option_id"]: b["branch"]["precondition"] for b in r["branches"]} == {oid: "decide_by: 2020-01-01", mid: "decide_by: 2031-05-01"}
+    status = lambda: {b["branch"]["option_id"]: b["branch"]["status"] for b in client.get("/branches", params={"person_id": pid}, headers=auth).json()["branches"]}
+    assert status()[oid] == "stale", "the stale check applies on the next read"
+    r = edit({"deadline": {oid: None}}).json()
+    assert next(b for b in r["branches"] if b["branch"]["option_id"] == oid)["branch"]["precondition"] is None and status()[oid] == "open"
+    assert edit({"deadline": {oid: "next friday"}}).status_code == 400 and edit({"rename": {"nope": "x"}}).status_code == 404
+
+    r = edit({"add": [{"title": "Take the bank job in Toronto"}]}).json()
+    added = r["branches"][-1]
+    assert len(r["scenario"]["options"]) == 3 and added["branch"]["forming"] and added["years"] == [] and added["branch"]["model"] is None
+    after = {b["branch"]["id"]: b for b in client.get("/branches", params={"person_id": pid}, headers=auth).json()["branches"]}
+    formed = after[added["branch"]["id"]]
+    assert not formed["branch"]["forming"] and formed["years"] and formed["branch"]["label"] == "Take the bank job in Toronto"
+    assert formed["branch"]["fork"] == offer["branch"]["fork"] and formed["branch"]["span"] == offer["branch"]["span"]
+    assert after[masters["branch"]["id"]]["branch"]["revision"] == masters["branch"]["revision"], "siblings untouched"
+    assert after[masters["branch"]["id"]]["years"] == masters["years"]
+    scenario = client.get("/scenarios", params={"person_id": pid}, headers=auth).json()["scenarios"][0]
+    assert scenario["scale"] == "small", "a chosen scale is never re-inferred, even after a path is added"
+
+    assert edit({"add": [{"title": "A fourth"}]}).status_code == 200
+    assert edit({"add": [{"title": "A fifth"}]}).status_code == 400, "at most four paths"
+    other, other_auth = new_person(client)
+    assert edit({"situation": "mine now"}, other_auth).status_code == 403
+
+    client.post("/merge", json={"branch_id": masters["branch"]["id"], "confirm": "Stay for the master's"}, headers=auth)
+    assert edit({"situation": "too late"}).status_code == 409, "a decided scenario cannot be edited"
+
+
+def test_a_forming_decision_refuses_edits_instead_of_losing_them(client, monkeypatch):
+    from app import scenarios as scenarios_ops
+
+    monkeypatch.setattr(scenarios_ops, "form", lambda *a, **k: None)  # forming never lands in this test
+    headers = {"Authorization": "Bearer demo"}
+    made = client.post("/scenarios", headers=headers, json={
+        "person_id": "demo", "situation": "Friday", "options": [{"title": "the party"}, {"title": "the problem set"}]}).json()
+    assert all(b["branch"]["forming"] for b in made["branches"])
+    refused = client.post(f"/scenarios/{made['scenario']['id']}/edit", headers=headers, json={"situation": "Friday night"})
+    assert refused.status_code == 409
+
+
+# --- v2.5: probabilities, shown and explained ---
+
+
+def test_events_carry_probabilities_ordered_most_likely_first_with_breakdowns(client):
+    for view in client.get("/branches", params=DEMO).json()["branches"]:
+        events = view["branch"]["model"]["events"]
+        probs = [e["probability"] for e in events]
+        assert probs == sorted(probs, reverse=True) and all(0 <= p <= 1 for p in probs)
+        for e in events:
+            b = e["breakdown"]
+            assert b["simulated"] == e["probability"] and b["base"]["kind"] == e["basis"] and b["base"]["note"]
+            assert (b["base"]["range"] is not None) == (e["basis"] == "estimated" or e["band"] > 0)
+            assert len(b["personality"]) <= 2 and all(i["basis"] in ("published", "assumed") for i in b["personality"])
+        final = view["years"][-1]["outlook"]
+        assert all(final[e["key"]]["probability"] == e["probability"] for e in events)
+        first = view["years"][0]["outlook"]
+        assert all(first[k]["probability"] <= final[k]["probability"] for k in (e["key"] for e in events)), "cumulative"
+    offer = demo_branches(client)[0]["branch"]["model"]["events"]
+    moved = next(e for e in offer if e["key"] == "move_back_to_canada")["breakdown"]["personality"]
+    assert moved and {i["basis"] for i in moved} == {"published"}, "a matching life-course hazard uses the published effect"
+    burnout = next(e for e in offer if e["key"] == "on_call_burnout")["breakdown"]
+    assert burnout["personality"][0]["basis"] == "assumed" and burnout["personality"][0]["beta"] == 0.2
+    assert burnout["base"]["kind"] == "sourced" and burnout["base"]["evidence_id"] and burnout["base"]["reference_class"]
+
+
+def test_no_personality_no_shift_through_the_api(client):
+    pid, auth = new_person(client, birth_year=2003)
+    from app import llm
+    events = new_scenario(client, pid, auth)["branches"][0]["branch"]["model"]["events"]
+    assert events == [] or all(e["breakdown"]["personality"] == [] for e in events)
+    going = demo_branches(client, "demo-tonight")[0]["branch"]["model"]["events"]
+    assert any(e["breakdown"]["personality"] for e in going), "the demo person has an MBTI type, so some events shift"
+
+
+def test_compare_and_distinctive_carry_probabilities(client):
+    going, staying = demo_branches(client, "demo-tonight")
+    result = client.get("/compare", params={"a": going["branch"]["id"], "b": staying["branch"]["id"]}).json()
+    row = result["checkpoints"][-1]["rows"][0]
+    assert all(0 <= v["probability"] <= 1 and v["words"] for v in row["values"])
+    assert result["distinctive"] and all(0 <= d["probability"] <= 1 for d in result["distinctive"])
+
+
+def test_the_model_card_is_open_complete_and_matches_the_docs(client, monkeypatch):
+    from app import config, model_card
+
+    monkeypatch.setattr(config, "SIM_RUNS", 1000)  # the suite runs fewer lives for speed; the card reports the real setting
+
+    card = client.get("/model", headers={"Authorization": ""}).json()
+    assert card["version"] == "2.6" and len(card["steps"]) == 6 and all(s["title"] and s["text"] for s in card["steps"])
+    names = " ".join(k["name"] + " " + k["value"] for k in card["constants"])
+    for needle in ("0.20", "0.15", "1.37", "1000", "modal life", "six months", "0.02–0.10", "quarter", "off by default", "3 years", "half-life 10 days", "10th–90th"):
+        assert needle in names, needle
+    assert len(card["limits"]) >= 8 and any("fiction" in l for l in card["limits"]) and any("estimates" in l for l in card["limits"])
+    assert (config.ROOT / "docs" / "MODEL.md").read_text() == model_card.markdown(), "regenerate with: python -m app.model_card"
+
+
+def test_older_branches_are_migrated(client):
+    from app import branches, db
+    from app.models import Horizon
+
+    branch, years = db.get_branch(demo_branches(client)[0]["branch"]["id"])
+    branch.model["events"] = [e for e in branch.model["events"] if not e.get("head")]
+    for e in branch.model["events"]:                        # the pre-2.5, pre-layout shape: yearly steps, forty years, no step zero
+        e.pop("breakdown"); e.pop("terms", None); e.pop("days", None)
+        e["probability"] = e.pop("base_probability")
+        e["window"] = [0, 1]
+    branch.model.pop("layout")
+    branch.span, branch.horizon = Horizon(unit="years", count=40), 40
+    db.save_branch(branch, years)
+    assert branches.migrate() == 1
+    after, lived = db.get_branch(branch.id)
+    assert after.revision == branch.revision + 1 and all("breakdown" in e for e in after.model["events"])
+    assert after.span.count == 3 and len(lived) == 23, "no forty-year paths"
+    assert after.model["events"][0]["head"] and lived[0].events[0].payload["head"]
+    sourced = next(e for e in after.model["events"] if e["basis"] == "sourced")
+    assert sourced["breakdown"]["base"]["value"] == sourced["base_probability"] and branches.migrate() == 0
+
+
+def test_dates_keep_the_precision_they_were_given():
+    from app.ingest.pipeline import _event
+
+    year = _event("p", "told", "x", domain="career", event_type="job_start", text="a", when="2024", confidence=1)
+    month = _event("p", "told", "x", domain="career", event_type="job_start", text="b", when="2025-06", confidence=1)
+    none = _event("p", "told", "x", domain="career", event_type="project", text="c", when="Summer", confidence=1)
+    assert (year.date, year.payload["date_precision"]) == ("2024-01-01", "year")
+    assert (month.date, month.payload["date_precision"]) == ("2025-06-01", "month")
+    assert none.payload.get("undated") is True and "date_precision" not in none.payload

@@ -18,7 +18,7 @@ from typing import Optional
 from . import branches as branch_ops
 from . import config, db, jev, llm, outcome_model, probability
 from .models import Branch, Evidence, Horizon, LifeEvent, Option, Person, Question, ResearchStep, Scenario, StateVector
-from .sim.outcomes import UNANSWERED_WIDEN
+from .sim.outcomes import UNANSWERED_WIDEN, step_offsets
 from .store import get_store
 
 log = logging.getLogger("hereafter.scenarios")
@@ -76,7 +76,7 @@ def _track_record(person: Person, branch_id: str, events: list[dict]) -> list[Ev
     touched = False
     for e in events:
         if e.get("follow_through") and e["basis"] == "estimated":
-            e.update({"basis": "personal", "probability": round(min(max(share, 0.02), 0.98), 4),
+            e.update({"basis": "personal", "base_probability": round(min(max(share, 0.02), 0.98), 4),
                       "band": TRACK_RECORD_BAND, "evidence_id": evidence_id, "words": likelihood_words(share)})
             touched = True
     if not touched:
@@ -120,11 +120,15 @@ def life_script(person: Person, fork: StateVector, text: str) -> tuple[dict, str
     return script, because
 
 
-def _about(fork: StateVector, assumed) -> str:
+def _about(fork: StateVector, assumed, keys: Optional[list[str]] = None, facts: Optional[list[str]] = None) -> str:
     about = (f"age {fork.age}, lives in {fork.city}, {fork.employment}, {fork.relationship_status}, "
              f"{fork.housing.replace('_', ' ')}")
     if assumed:
         about += f". They are deliberating this ASSUMING they have already chosen: {assumed.label}"
+    if facts:
+        about += ". On that path, by the date this decision comes up, this has already happened: " + "; ".join(facts[-12:])
+    if keys:
+        about += f". Outcome keys already in use on this decision's other paths (reuse them wherever they fit): {', '.join(keys)}"
     return about
 
 
@@ -132,18 +136,27 @@ def propose(person: Person, fork: StateVector, scenario: Scenario, fixed: Option
     known, events = known_from_main(person, scenario.situation, scenario.options)
     proposed = llm.propose_scenario_model(
         scenario.situation, [{"title": o.title, "details": o.details} for o in scenario.options],
-        fixed.model_dump() if fixed else None, _about(fork, assumed), known,
+        fixed.model_dump() if fixed else None,
+        _about(fork, assumed, facts=scenario.assumed_facts, keys=sorted({e["key"] for b in _branches_of(scenario).values() for e in (b.model or {}).get("events", [])})[:30]),
+        known,
     )
     if proposed is None:
-        horizon = outcome_model.clamp(fixed or outcome_model.rules_horizon(scenario.situation, scenario.options))
-        return horizon, [[] for _ in scenario.options], [], len(events)
+        read = fixed or outcome_model.inferred_horizon(scenario.situation, scenario.options)
+        horizon = outcome_model.clamp(read or outcome_model.DEFAULT_HORIZON, person_set=fixed is not None)
+        bare = [[outcome_model.head_event(outcome_model.choice_label(o.title))] for o in scenario.options]
+        return horizon, bare, [], len(events), outcome_model.decide_scale(None, read, None)
     horizon = outcome_model.clamp(fixed or Horizon(unit=proposed.horizon_unit, count=proposed.horizon_count,
-                                                   tonight=proposed.starts_tonight))
+                                                   tonight=proposed.starts_tonight), person_set=fixed is not None)
+    offsets = step_offsets(horizon.unit, horizon.count, date.fromisoformat(scenario.fork_at) if scenario.fork_at else date.today())
     by_index = {o.option_index: o for o in proposed.options}
-    models = [outcome_model.from_proposal(by_index[i], horizon.count) if i in by_index else []
-              for i in range(len(scenario.options))]
+    said = scenario.situation + " " + " ".join(f"{o.title} {o.details}" for o in scenario.options) + " " + known
+    models = [outcome_model.from_proposal(by_index[i], offsets, o.title, said) if i in by_index
+              else [outcome_model.head_event(outcome_model.choice_label(o.title))]
+              for i, o in enumerate(scenario.options)]
     answered = [e for e in events if e.event_type == "answer"]
-    return horizon, models, _questions(scenario, proposed, answered), len(events)
+    # The LLM always names a horizon, so the horizon decides; its own `scale` opinion is only a tie-break.
+    return (horizon, models, _questions(scenario, proposed, answered), len(events),
+            outcome_model.decide_scale(None, horizon, proposed.scale))
 
 
 def _say(branch_id: str, state: str, message: str) -> None:
@@ -155,21 +168,31 @@ def _branches_of(scenario: Scenario) -> dict[str, Branch]:
 
 
 def create(person: Person, fork: StateVector, situation: str, options: list[Option], fixed: Optional[Horizon],
-           assuming_branch_id: Optional[str] = None) -> tuple[Scenario, list]:
+           assuming_branch_id: Optional[str] = None, scale: Optional[str] = None,
+           assuming_at: Optional[str] = None) -> tuple[Scenario, list]:
     """Returns at once: the scenario and one placeholder branch per option, still forming.
     `form` (a background task) does the imagining, the first simulation and the research."""
     scenario = Scenario(id=uuid.uuid4().hex[:12], person_id=person.id, situation=situation,
                         created_at=datetime.now().isoformat(timespec="seconds"), options=options,
                         assuming_branch_id=assuming_branch_id,
-                        horizon=outcome_model.clamp(fixed or outcome_model.rules_horizon(situation, options)))
+                        horizon=outcome_model.clamp(fixed or outcome_model.rules_horizon(situation, options),
+                                                    person_set=fixed is not None))
+    scenario.scale_chosen = scale is not None
+    scenario.scale = outcome_model.decide_scale(scale, fixed or outcome_model.inferred_horizon(situation, options), None)
     if assuming_branch_id:
         found = db.get_branch(assuming_branch_id)
         if found and found[0].person_id == person.id and found[1]:
-            fork = found[1][0].state  # fork from that branch's simulated state, not from now
+            lived = found[1]
+            upto = [y for y in lived if assuming_at and y.at <= assuming_at[:10]] or lived[:1]
+            fork = upto[-1].state  # fork from that branch's simulated state (at that date), not from now
+            if assuming_at:
+                scenario.assuming_at = scenario.fork_at = max(assuming_at[:10], lived[0].at)
+                # what had already happened on that path by then comes along as facts
+                scenario.assumed_facts = [f"{e.date}: {e.text}" for y in upto for e in y.events if e.date <= scenario.fork_at]
     views = []
     for option in options:
         branch = Branch(id=uuid.uuid4().hex[:12], person_id=person.id, label=option.title,
-                        forked_at=date.today().isoformat(), scenario_id=scenario.id, option_id=option.id,
+                        forked_at=scenario.fork_at or date.today().isoformat(), scenario_id=scenario.id, option_id=option.id,
                         precondition=f"decide_by: {option.deadline}" if option.deadline else None,
                         research="pending", forming=True, model=None, fork=fork.model_dump(),
                         span=scenario.horizon, horizon=scenario.horizon.count)
@@ -181,15 +204,18 @@ def create(person: Person, fork: StateVector, situation: str, options: list[Opti
     return scenario, views
 
 
-def _shape(person: Person, scenario: Scenario, fixed: Optional[Horizon], only: Optional[set[str]] = None) -> list[str]:
+def _shape(person: Person, scenario: Scenario, fixed: Optional[Horizon], only: Optional[set[str]] = None,
+           scale: Optional[str] = None, touch_others: bool = True) -> list[str]:
     """Propose -> per-option models -> first (or next) simulation. Returns the branch ids it rebuilt."""
     mine = _branches_of(scenario)
     first = next(iter(mine.values()))
     fork = StateVector(**first.fork)
     assumed = db.get_branch(scenario.assuming_branch_id)[0] if scenario.assuming_branch_id and db.get_branch(scenario.assuming_branch_id) else None
-    horizon, models, questions, looked_at = propose(person, fork, scenario, fixed, assumed)
-    if only is None:  # first forming: the horizon and the questions are settled here
+    horizon, models, questions, looked_at, inferred = propose(person, fork, scenario, fixed, assumed)
+    if only is None:  # first forming: the horizon, the scale and the questions are settled here
         scenario.horizon, scenario.questions = horizon, questions
+        if not scenario.scale_chosen:
+            scenario.scale = inferred
         db.save_scenario(scenario)
     background = branch_ops.has_background(scenario.horizon)
     text = scenario.situation + " " + " ".join(f"{o.title} {o.details}" for o in scenario.options)
@@ -204,6 +230,8 @@ def _shape(person: Person, scenario: Scenario, fixed: Optional[Horizon], only: O
 
     rebuilt = []
     for option, events, (assumption, params), n_judged in zip(scenario.options, models, read, judged):
+        if only is not None and option.id not in only and not touch_others:
+            continue  # a path was added: its siblings are left exactly as they were
         with branch_ops.lock:
             branch = _branches_of(scenario).get(option.id)
             if branch is None or branch.status != "open":
@@ -241,7 +269,8 @@ def _shape(person: Person, scenario: Scenario, fixed: Optional[Horizon], only: O
     return rebuilt
 
 
-def form(scenario_id: str, fixed: Optional[Horizon] = None, only: Optional[list[str]] = None) -> None:
+def form(scenario_id: str, fixed: Optional[Horizon] = None, only: Optional[list[str]] = None,
+         scale: Optional[str] = None, touch_others: bool = True) -> None:
     """Background task: shape the branches, then research them. Never leaves a branch forming."""
     from . import research
 
@@ -250,7 +279,7 @@ def form(scenario_id: str, fixed: Optional[Horizon] = None, only: Optional[list[
     rebuilt: list[str] = []
     try:
         rebuilt = _shape(person, scenario, fixed or (scenario.horizon if only is not None else None),
-                         set(only) if only is not None else None)
+                         set(only) if only is not None else None, scale, touch_others)
     except Exception:
         log.exception("forming failed; branches fall back to the statistics alone")
     will_research = bool(config.RESEARCH_ENABLED and llm.enabled() and config.BROWSERBASE_API_KEY)
@@ -268,6 +297,75 @@ def form(scenario_id: str, fixed: Optional[Horizon] = None, only: Optional[list[
                     db.save_branch(branch)
     if will_research and rebuilt:
         research.research_scenario(db.get_scenario(scenario_id), rebuilt)
+
+
+MAX_OPTIONS = 4
+
+
+class EditRefused(Exception):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status, self.message = status, message
+
+
+def edit(person: Person, scenario: Scenario, req) -> tuple[Scenario, list, list[str]]:
+    """The person editing their own decision ticket. Renames and deadlines are bookkeeping (nothing
+    is re-simulated); an added path is a new forming branch and its siblings are left alone.
+    Returns (scenario, views, ids of added options)."""
+    if scenario.status == "decided":
+        raise EditRefused(409, "this decision has been made; it can be read but not edited")
+    mine = _branches_of(scenario)
+    options = {o.id: o for o in scenario.options}
+    unknown = [i for i in [*req.rename, *req.deadline] if i not in options]
+    if unknown:
+        raise EditRefused(404, "no such path on this decision")
+    for when in req.deadline.values():
+        if when is not None:
+            try:
+                date.fromisoformat(when)
+            except ValueError:
+                raise EditRefused(400, "a deadline is a date, YYYY-MM-DD")
+    titles = [o.title.strip() for o in req.add if o.title.strip()]
+    if len(scenario.options) + len(titles) > MAX_OPTIONS:
+        raise EditRefused(400, "a decision holds at most four paths")
+    if titles and any(b.forming for b in mine.values()):
+        raise EditRefused(409, "these paths are still forming; add another in a moment")
+
+    if req.situation is not None and req.situation.strip():
+        scenario.situation = req.situation.strip()
+    if req.scale is not None:
+        scenario.scale, scenario.scale_chosen = req.scale, True
+    with branch_ops.lock:
+        for option_id, title in req.rename.items():
+            if title.strip():
+                options[option_id].title = title.strip()
+                if option_id in mine:
+                    mine[option_id].label = title.strip()
+                    db.save_branch(mine[option_id])
+        for option_id, when in req.deadline.items():
+            options[option_id].deadline = when
+            branch = mine.get(option_id)
+            if branch is not None:
+                was_dated = (branch.precondition or "").startswith("decide_by:")
+                branch.precondition = f"decide_by: {when}" if when else (None if was_dated else branch.precondition)
+                if branch.status == "stale" and was_dated:
+                    branch.status = "open"  # the deadline moved; the next read decides again whether it is stale
+                db.save_branch(branch)
+
+    added = []
+    template = next(iter(mine.values()), None)
+    for title in titles:
+        option = Option(id=uuid.uuid4().hex[:8], title=title, details="", deadline=None)
+        scenario.options.append(option)
+        branch = Branch(id=uuid.uuid4().hex[:12], person_id=person.id, label=title, forked_at=date.today().isoformat(),
+                        scenario_id=scenario.id, option_id=option.id, research="pending", forming=True, model=None,
+                        fork=template.fork if template else {}, span=scenario.horizon, horizon=scenario.horizon.count)
+        db.save_branch(branch, [])
+        _say(branch.id, "searching", f"Imagining what could happen if you choose: {title}…")
+        scenario.branch_ids.append(branch.id)
+        added.append(option.id)
+    db.save_scenario(scenario)
+    return scenario, [branch_ops.view(bid) for bid in scenario.branch_ids], added
 
 
 def answer(person: Person, scenario: Scenario, answers: dict[str, str]) -> tuple[Scenario, list, list[str]]:

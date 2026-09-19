@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import { likelihoodWords } from '../derive'
-import { dateLabel, dayLabel, deadlineOf, yearOf } from '../format'
+import { belongsOnLine, dayLabel, deadlineOf, isByYear, preciseDate, stepDate, yearOf } from '../format'
 import { theme } from '../theme'
 import type { BranchView, BranchYear, Insets, LifeEvent, Scenario, Zone } from '../types'
 import { placeLabels, type Candidate } from './labels'
@@ -24,6 +23,7 @@ interface Props {
   free?: Insets
   /** the borrowed life is stepping aside: its lanes fade out */
   leavingExamples?: boolean
+  onFocusDecision?: (scenarioId: string | null) => void
 }
 
 const NO_ZONES: Zone[] = []
@@ -36,9 +36,8 @@ export function accentOf(view: BranchView, scenarios: Scenario[]): string {
   return theme.branch[i % theme.branch.length]
 }
 
-const UNIT_WORDS = { days: 'a day', weeks: 'a week', months: 'a month', years: 'a year' } as const
 
-export function Line({ now, events, views, scenarios, activeId, hereStep, rare, onSwitch, onSeek, onOpenLog, compact = false, zones = NO_ZONES, free = NO_INSETS, leavingExamples = false }: Props) {
+export function Line({ now, events, views, scenarios, activeId, hereStep, rare, onSwitch, onSeek, onOpenLog, compact = false, zones = NO_ZONES, free = NO_INSETS, leavingExamples = false, onFocusDecision }: Props) {
   const frame = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 560, h: 800 })
   const home = useMemo(() => ({ x: 0, y: 0, k: compact ? 0.4 : 1 }), [compact])
@@ -46,6 +45,7 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
   const drag = useRef<{ x: number; y: number; px: number; py: number; moved: boolean } | null>(null)
   const seen = useRef<Set<string> | null>(null)
   const wasForming = useRef(new Set<string>())
+  const [legend, setLegend] = useState(false)
 
   useEffect(() => {
     const el = frame.current
@@ -79,7 +79,7 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
   }, [layout])
 
   const origin = compact ? { x: size.w * 0.42, y: size.h * 0.8 } : { x: free.left + freeW * 0.3, y: free.top + freeH * 0.58 }
-  const mainEvents = events.filter((e) => e.branch_id === 'main' && e.event_type !== 'goal')
+  const mainEvents = events.filter((e) => e.branch_id === 'main' && e.event_type !== 'goal' && belongsOnLine(e))
   const goals = events.filter((e) => e.event_type === 'goal')
   const active = layout.lanes.find((l) => l.view.branch.id === activeId) ?? null
   const rareLane = useMemo(() => (active && rare ? layoutRare(active, rare) : null), [active, rare])
@@ -93,11 +93,10 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
       const colour = accentOf(active.view, scenarios)
       for (const n of active.nodes) {
         const here = n.step === hereStep
-        const step = active.view.years[n.step]
         const estimate = n.basis === 'estimated' ? ' · an estimate' : ''
         c.push({
-          id: n.id, kind: here ? 'card' : n.kind === 'commit' ? 'commit' : 'node', priority: here ? 0 : 1, anchor: n.at, prefer: active.side, colour, reach: 64,
-          top: n.kind === 'commit' ? `your commit · ${n.caption}` : here && n.event ? `${n.caption} · ${n.event.domain} · ${likelihoodWords(step?.solidity ?? 0.6)}${estimate}` : `${n.caption}${estimate}`,
+          id: n.id, kind: here ? 'card' : n.kind === 'commit' ? 'commit' : 'node', priority: here ? 0 : 1, anchor: n.at, prefer: active.side, colour, reach: 120, upOnly: true,
+          top: n.head ? `The choice · ${n.caption}` : n.kind === 'commit' ? `Your commit · ${n.caption}` : `${n.caption}${estimate}${here && n.event && active.view.years[n.step]?.outlook[n.event.event_type]?.probability !== undefined ? ` · ${Math.round(active.view.years[n.step].outlook[n.event.event_type].probability! * 100)}%` : ''}`,
           text: n.label,
           onClick: () => onSeek(active.view.branch.id, n.step),
         })
@@ -106,7 +105,7 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
     }
     for (const lane of layout.lanes) {
       const { branch } = lane.view
-      if (lane === active || !(lane.focus || branch.status === 'merged')) continue
+      if (lane === active || !lane.focus) continue
       const closed = branch.status === 'faded' || branch.status === 'stale'
       const deadline = deadlineOf(branch.precondition)
       const base = branch.forming ? 'being drawn' : branch.status === 'stale' && deadline ? `stale · closed ${dayLabel(deadline)}` : branch.status === 'open' && deadline ? `until ${dayLabel(deadline)}` : STATUS_WORDS[branch.status]
@@ -122,10 +121,11 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
       const target = typeof g.payload.target_date === 'string' ? g.payload.target_date : null
       c.push({ id: g.id, kind: 'pick', priority: 3, anchor: { x: 0, y: pickY(i) }, prefer: -1, top: `picked${target ? ` · toward ${target.slice(0, 4)}` : ''}`, text: g.text })
     })
-    ;[...mainEvents].reverse().forEach((e, i) => c.push({ id: e.id, kind: 'log', priority: 4 + i * 0.01, anchor: { x: 0, y: layout.yAt(yearOf(e.date)) }, prefer: 1, reach: 112, top: e.example ? `an example · ${dateLabel(e.date)}` : dateLabel(e.date), text: e.text, onClick: onOpenLog }))
+    ;[...mainEvents].reverse().forEach((e, i) => c.push({ id: e.id, kind: 'log', priority: 4 + i * 0.01, anchor: { x: 0, y: layout.yAt(yearOf(e.date)) }, prefer: 1, reach: 132, top: preciseDate(e), text: e.text, onClick: onOpenLog }))
 
     const toGraph = (z: Zone): Zone => ({ x: (z.x - origin.x - pan.x) / pan.k, y: (z.y - origin.y - pan.y) / pan.k, w: z.w / pan.k, h: z.h / pan.k })
-    const blocked = [...zones.map(toGraph), { x: -9, y: layout.top - 200, w: 18, h: layout.yAt(layout.pastFrom) - layout.top + 200 }, { x: -96, y: -24, w: 92, h: 62 }]
+    const pennant = active && hereStep !== null ? active.pos(hereStep + 0.6) : null
+    const blocked = [...zones.map(toGraph), ...(pennant ? [{ x: pennant.x - 128, y: pennant.y - 12, w: 128, h: 24 }] : []), { x: -9, y: layout.top - 200, w: 18, h: layout.yAt(layout.pastFrom) - layout.top + 200 }, { x: -96, y: -24, w: 92, h: 62 }]
     return placeLabels(c, blocked, toGraph({ x: 8, y: 8, w: size.w - 16, h: size.h - 16 }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compact, layout, active, rareLane, hereStep, leavingExamples, goals.length, mainEvents.length, zones, origin.x, origin.y, pan, size.w, size.h, scenarios])
@@ -165,7 +165,6 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
   for (let y = Math.ceil(layout.pastFrom); y <= Math.floor(layout.now); y++) pastYears.push(y)
   const left = (-origin.x - pan.x) / pan.k
   const right = (size.w - origin.x - pan.x) / pan.k
-  const horizon = layout.focusHorizon
 
   return (
     <div className={`line ${compact ? 'line--compact' : ''}`} ref={frame} onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
@@ -192,7 +191,9 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
             {/* what has not happened yet: main goes on, unknown */}
             <line className="line__unknown" x1={0} x2={0} y1={0} y2={layout.top - 80} />
             {/* main: what actually happened. One thick line, never redrawn. */}
-            <line className="line__main" x1={0} x2={0} y1={layout.yAt(layout.pastFrom)} y2={0} />
+            {mainSpans(layout.yAt(layout.pastFrom), 0, layout.turns).map(([a, b, turned], i) => (
+              <line key={i} className={turned ? 'line__main-left' : 'line__main'} x1={0} x2={0} y1={a} y2={b} />
+            ))}
             <path className="line__main-root" d={`M-7 ${layout.yAt(layout.pastFrom)} h14`} />
 
             {layout.lanes.map((lane) => (
@@ -208,6 +209,10 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
               </g>
             )}
 
+            {layout.forks.filter((f) => !f.collapsed).map((f) =>
+              f.scale === 'big' ? <path key={f.id} className="line__fork line__fork--big" d={`M${f.x - 10} ${f.y} L${f.x} ${f.y - 10} L${f.x + 10} ${f.y} L${f.x} ${f.y + 10} Z`} /> : <circle key={f.id} className="line__fork line__fork--small" cx={f.x} cy={f.y} r={3.5} />,
+            )}
+
             {/* main's log entries: strokes across the line, a heavier one where something was chosen */}
             {mainEvents.map((e) => {
               const y = layout.yAt(yearOf(e.date))
@@ -221,9 +226,6 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
             <path d="M-9 0 L0 -9 L9 0 L0 9 Z" />
             <text x={-18} y={-10} textAnchor="end">now</text>
             {!compact && <text className="line__now-date" x={-18} y={16} textAnchor="end">{dayLabel(now)}</text>}
-            {!compact && horizon && horizon.unit !== 'years' && (
-              <text className="line__scale-note" x={-18} y={32} textAnchor="end">above now, about {UNIT_WORDS[horizon.unit]} a step</text>
-            )}
           </g>
 
           {/* picked moments: a small gold mark on main ahead of now, tied to where it came from */}
@@ -239,6 +241,15 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
             )
           })}
 
+          {/* the other decisions: one circle each on main. Its name on hover; a click brings it into focus. */}
+          {layout.forks.filter((f) => f.collapsed).map((f) => (
+            <g key={f.id} className="line__fork--collapsed">
+              <circle cx={f.x} cy={f.y} r={f.scale === 'big' ? 8 : 5} className={f.scale === 'big' ? 'line__fork line__fork--big' : 'line__fork line__fork--big line__fork--minor'} />
+              <circle cx={f.x} cy={f.y} r={14} className="line__fork-hit" tabIndex={0} onClick={unlessDragged(() => onFocusDecision?.(f.id))} onKeyDown={(e) => e.key === 'Enter' && onFocusDecision?.(f.id)}><title>{f.label}</title></circle>
+              {!compact && <text className="line__fork-name" x={f.x - 16} y={f.y + 4} textAnchor="end">{f.label}</text>}
+            </g>
+          ))}
+
           {/* hit areas sit above the ink, unfiltered */}
           {layout.lanes.map((lane) => (
             <path key={lane.view.branch.id} className="lane__hit" d={lane.hit} onClick={unlessDragged(() => onSwitch(lane.view.branch.id))}>
@@ -251,8 +262,8 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
             <g key={l.id} className={`label label--${l.kind}`} style={{ color: l.colour }} onClick={l.onClick && unlessDragged(l.onClick)}>
               <path className="line__leader" d={l.leader} />
               {l.kind === 'card' && <rect className="label__paper" x={l.x} y={l.y} width={l.w} height={l.h} rx={9} />}
-              {l.top && <text x={(l.side === 1 ? l.x : l.x + l.w) + (l.kind === 'card' ? l.side * 10 : 0)} y={l.y + (l.kind === 'card' ? 21 : 11)} textAnchor={l.side === 1 ? 'start' : 'end'} className="line__date">{l.top}</text>}
-              <text x={(l.side === 1 ? l.x : l.x + l.w) + (l.kind === 'card' ? l.side * 10 : 0)} y={l.y + l.h - (l.kind === 'card' ? 14 : 4)} textAnchor={l.side === 1 ? 'start' : 'end'} className={l.kind === 'name' ? 'lane__title' : `line__message ${l.kind === 'commit' ? 'line__message--commit' : ''}`}>{l.text}</text>
+              {l.top && <text x={(l.side === 1 ? l.x : l.x + l.w) + (l.kind === 'card' ? l.side * 8 : 0)} y={l.y + (l.kind === 'card' ? 20 : 12)} textAnchor={l.side === 1 ? 'start' : 'end'} className="line__date">{l.top}</text>}
+              <text x={(l.side === 1 ? l.x : l.x + l.w) + (l.kind === 'card' ? l.side * 8 : 0)} y={l.y + l.h - (l.kind === 'card' ? 13 : 5)} textAnchor={l.side === 1 ? 'start' : 'end'} className={l.kind === 'name' ? 'lane__title' : `line__message ${l.kind === 'commit' ? 'line__message--commit' : ''}`}>{l.text}</text>
             </g>
           ))}
 
@@ -260,7 +271,8 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
         </g>
       </svg>
 
-      {!compact && <div className="line__legend" aria-hidden="true">
+      {!compact && <button type="button" className="h-link line__legend-toggle" style={{ left: free.left + 8, top: free.top + 12 }} onClick={() => setLegend((v) => !v)} aria-expanded={legend}>{legend ? 'Hide the key' : 'How to read the line'}</button>}
+      {!compact && legend && <div className="line__legend" style={{ left: free.left + 8, top: free.top + 44 }}>
         <span><i className="ink ink--sure" />almost always</span>
         <span><i className="ink ink--usual" />usually</span>
         <span><i className="ink ink--even" />as often as not</span>
@@ -271,16 +283,30 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
       </div>}
       {!compact && (pan.x !== 0 || pan.y !== 0 || pan.k !== 1) && (
         <button type="button" className="quiet line__recentre" onClick={() => setPan(home)}>
-          return to now
+            Back to now
         </button>
       )}
     </div>
   )
 }
 
+/** Main, cut where a merged life decision turned it aside: [y from, y to, turned aside]. */
+function mainSpans(bottom: number, top: number, turns: [number, number][]): [number, number, boolean][] {
+  const out: [number, number, boolean][] = []
+  let from = bottom
+  for (const [a, b] of [...turns].sort((x, y) => y[0] - x[0])) {
+    if (a >= from || a <= top) continue
+    out.push([from, a, false], [a, Math.max(b, top), true])
+    from = Math.max(b, top)
+  }
+  out.push([from, top, false])
+  return out
+}
+
 /** An event is a short stroke across the line: solid when it rests on a published figure, open when it is an estimate. */
 function Tick({ node, colour }: { node: LaneNode; colour: string }) {
   const { at, normal, basis } = node
+  if (node.head) return <circle className="lane__head" cx={at.x} cy={at.y} r={6} stroke={colour} />
   if (node.kind === 'commit') return <path className="lane__knot" stroke={colour} d={`M${at.x} ${at.y - 8} L${at.x + 7} ${at.y} L${at.x} ${at.y + 8} L${at.x - 7} ${at.y} Z`} />
   const a = { x: at.x - normal.x * 8, y: at.y - normal.y * 8 }
   const b = { x: at.x + normal.x * 8, y: at.y + normal.y * 8 }
@@ -294,14 +320,16 @@ function Tick({ node, colour }: { node: LaneNode; colour: string }) {
 function LaneInk({ lane, accent, active, dim, fresh, leaving }: { lane: Lane; accent: string; active: boolean; dim: boolean; fresh: boolean; leaving: boolean }) {
   const status = lane.view.branch.status
   const closed = status === 'faded' || status === 'stale'
-  const colour = status === 'merged' ? theme.color.text : closed ? theme.color.ruin : accent
+  const colour = closed ? theme.color.ruin : accent
   return (
     <g className={`lane lane--${status} ${active ? 'lane--active' : ''} ${dim ? 'lane--dim' : ''} ${fresh ? 'lane--fresh' : ''} ${lane.view.branch.forming ? 'lane--forming' : ''} ${lane.view.branch.example ? 'lane--example' : ''} ${lane.view.branch.example && leaving ? 'lane--leaving' : ''}`}>
       {active && <path className="lane__halo" d={lane.hit} stroke={colour} />}
       {lane.segments.map((s) => {
-        const certain = status === 'merged' && lane.rejoinS !== null && s.index + 1 <= lane.rejoinS
+        const certain = status === 'merged' && s.index === 0
         const base = inkFor(s.solidity)
-        const ink = certain ? { ...base, width: 4.4, dash: undefined, wash: false } : status === 'merged' ? { ...base, width: base.width + 0.8 } : base
+        const small = lane.scale === 'small'
+        const weighed = { ...base, width: base.width * (small ? 0.7 : 1.15) }
+        const ink = certain ? { ...base, width: small ? 2 : 6, dash: undefined, wash: false } : status === 'merged' ? { ...weighed, width: weighed.width + 0.8 } : weighed
         const delay = `${Math.min(s.index, 30) * (fresh ? 80 : 45)}ms`
         return (
           <g key={s.index} style={{ opacity: s.hidden ? 0 : 1, transitionDelay: delay }} className="lane__seg">
@@ -309,7 +337,7 @@ function LaneInk({ lane, accent, active, dim, fresh, leaving }: { lane: Lane; ac
             <path
               d={s.d}
               fill="none"
-              stroke={colour}
+              stroke={certain ? theme.color.text : colour}
               strokeWidth={ink.width + (active ? 0.8 : 0)}
               strokeDasharray={ink.dash}
               strokeLinecap="round"
@@ -335,7 +363,7 @@ function LaneInk({ lane, accent, active, dim, fresh, leaving }: { lane: Lane; ac
   )
 }
 
-const STATUS_WORDS: Record<string, string> = { open: '', merged: 'merged into main', faded: 'a road not taken', stale: 'stale', expired: 'stale' }
+const STATUS_WORDS: Record<string, string> = { open: '', merged: 'chosen · what follows is a projection', faded: 'not taken', stale: 'closed', expired: 'closed' }
 const pickY = (i: number) => -110 - i * 44
 
 /** Where the reader is on the page: a small pennant on the lane. */
@@ -344,7 +372,7 @@ function Here({ lane, step, accent }: { lane: Lane; step: number; accent: string
   return (
     <g className="line__here" style={{ transform: `translate(${p.x}px, ${p.y}px)` }}>
       <path d="M-3 0 L-24 -7 L-24 7 Z" fill={accent} />
-      <text x={-29} y={4} textAnchor="end">{lane.view.years[step]?.label ?? ''}</text>
+      <text x={-29} y={4} textAnchor="end">{lane.view.years[step] ? stepDate(lane.view.years[step].at, isByYear(lane.view.years)) : ''}</text>
     </g>
   )
 }

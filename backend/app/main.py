@@ -22,11 +22,11 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import branches as branch_ops
-from . import chapters, config, db, llm, research, security, seed
+from . import ticket, branches as branch_ops
+from . import chapters, config, db, llm, model_card, research, security, seed
 from . import scenarios as scenarios_ops
 from .ingest import links, pipeline
-from .models import (AnswersRequest, Branch, BranchView, CarryRequest, CommitRequest, EraseRequest, LifeEvent, MergeRequest,
+from .models import (AnswersRequest, EditRequest, Branch, BranchView, CarryRequest, CommitRequest, EraseRequest, ForgetRequest, LifeEvent, MergeRequest,
                      Option, Person, PersonRequest, Scenario, ScenarioRequest, SimulateRequest, StateVector,
                      UndoRequest)
 from .personality import Personality, merge as merge_personality
@@ -34,6 +34,13 @@ from .state import build_state
 from .store import get_store
 
 log = logging.getLogger("hereafter")
+# The app's own INFO lines (what an upload was recognised as, field-name-only structure of an
+# unrecognised file) must reach the server log; uvicorn only configures its own loggers.
+if not log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s: %(message)s"))
+    log.addHandler(_handler)
+    log.setLevel(logging.INFO)
 NARRATION_BATCH = 25
 DATE_PRECONDITION = re.compile(r"^\s*([\w ]+?)\s*:\s*(\d{4}-\d{2}-\d{2})\s*$")
 STATE_PRECONDITION = re.compile(r"^\s*(\w+)\s*:\s*(.+?)\s*$")
@@ -48,6 +55,12 @@ async def lifespan(_: FastAPI):
         seed.ensure_demo(get_store())
     except Exception:
         log.exception("could not seed the demo person")
+    try:
+        moved = branch_ops.migrate()
+        if moved:
+            log.warning("re-simulated %s older branches so they carry probabilities and breakdowns", moved)
+    except Exception:
+        log.exception("could not migrate older branches")
     yield
 
 
@@ -104,11 +117,28 @@ def health():
             "now": today()}
 
 
+@app.get("/model")
+def model():
+    """How the numbers are made, in plain words. Open: there is nothing personal in it."""
+    return model_card.card()
+
+
+def _money(income, net_worth, currency, known: Optional[dict] = None) -> Optional[dict]:
+    """Only what the person chose to say. Later figures replace earlier ones field by field."""
+    if income is None and net_worth is None and not known:
+        return None
+    known = known or {}
+    return {"income": income if income is not None else known.get("income"),
+            "net_worth": net_worth if net_worth is not None else known.get("net_worth"),
+            "currency": (currency or known.get("currency") or "CAD").upper()}
+
+
 @app.post("/people")
 def create_person(req: PersonRequest):
     token = security.new_token()
     person = db.upsert_person(
-        Person(id=security.new_person_id(), display_name=req.display_name or "", birth_year=req.birth_year, sex=req.sex),
+        Person(id=security.new_person_id(), display_name=req.display_name or "", birth_year=req.birth_year, sex=req.sex,
+               money=_money(req.income, req.net_worth, req.currency)),
         token_hash=security.token_hash(token),
     )
     return {"person_id": person.id, "token": token}
@@ -123,6 +153,9 @@ async def ingest(
     display_name: Optional[str] = Form(None),
     birth_year: Optional[int] = Form(None),
     sex: Optional[str] = Form(None),
+    income: Optional[float] = Form(None),
+    net_worth: Optional[float] = Form(None),
+    currency: Optional[str] = Form(None),
     text: str = Form(""),
     handles: str = Form("{}"),
     links: str = Form("[]"),
@@ -150,14 +183,18 @@ async def ingest(
     merged = merge_personality(
         Personality(**person.personality) if person.personality else None, result["personality"]
     )
+    said = result.get("money") or {}
+    money = _money(income if income is not None else said.get("income"), net_worth if net_worth is not None else said.get("net_worth"),
+                   currency or said.get("currency"), person.money)
     person = db.upsert_person(Person(id=person.id, birth_year=person.birth_year or result["birth_year"],
-                                     personality=merged.model_dump() if merged else None))
+                                     personality=merged.model_dump() if merged else None, money=money))
     _, _, _, decisions = await run_in_threadpool(_present, person)  # RECONCILE across all sources
     return {
         "person_id": person.id,
         "events_added": result["events_added"],
         "inputs": result["inputs"],
         "personality": person.personality,
+        "money": person.money,
         "reconciliation": decisions,
     }
 
@@ -180,10 +217,18 @@ def create_scenario(req: ScenarioRequest, background: BackgroundTasks, token: st
     if req.assuming_branch_id:
         owned_branch(token, req.assuming_branch_id)
     _, fork, _, _ = _present(person)
+    situation = req.situation.strip()
     options = [Option(id=uuid.uuid4().hex[:8], title=o.title.strip(), details=o.details.strip(), deadline=o.deadline)
-               for o in req.options]
-    scenario, views = scenarios_ops.create(person, fork, req.situation.strip(), options, req.horizon, req.assuming_branch_id)
-    background.add_task(scenarios_ops.form, scenario.id, req.horizon)
+               for o in req.options if o.title.strip()]
+    if len(options) < 2:  # written as a ticket: find the options inside the line
+        written = (req.text or situation).strip()
+        if not written:
+            raise HTTPException(400, "say what you are deciding")
+        situation, titles = ticket.parse(written)
+        options = [Option(id=uuid.uuid4().hex[:8], title=t, details="", deadline=None) for t in titles]
+    scenario, views = scenarios_ops.create(person, fork, situation, options, req.horizon,
+                                           req.assuming_branch_id, req.scale, req.assuming_at)
+    background.add_task(scenarios_ops.form, scenario.id, req.horizon, None, req.scale)
     return {"scenario": scenario, "branches": views, "questions": scenario.questions}
 
 
@@ -191,6 +236,25 @@ def create_scenario(req: ScenarioRequest, background: BackgroundTasks, token: st
 def scenarios(person_id: str, token: str = Depends(bearer)):
     owner(token, person_id)
     return {"scenarios": scenarios_ops.listed(person_id)}
+
+
+@app.post("/scenarios/{scenario_id}/edit")
+def edit_scenario(scenario_id: str, req: EditRequest, background: BackgroundTasks, token: str = Depends(bearer)):
+    scenario = db.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(404, "no such scenario")
+    person = owner(token, scenario.person_id)
+    # Forming rewrites the scenario and its branches when it lands; an edit made meanwhile would be
+    # silently lost, so say so instead of accepting it.
+    if any(b.forming for b in scenarios_ops._branches_of(scenario).values()):
+        raise HTTPException(409, "these paths are still forming; edit in a moment")
+    try:
+        scenario, views, added = scenarios_ops.edit(person, scenario, req)
+    except scenarios_ops.EditRefused as refused:
+        raise HTTPException(refused.status, refused.message)
+    if added:
+        background.add_task(scenarios_ops.form, scenario.id, None, added, None, False)
+    return {"scenario": scenario, "branches": views}
 
 
 @app.post("/scenarios/{scenario_id}/answers")
@@ -262,11 +326,14 @@ def commit(branch_id: str, req: CommitRequest, token: str = Depends(bearer)) -> 
     step = branch_ops.step_of(branch, req.at, req.year) if (req.at or req.year) else None
     if step is None or step >= len(years):
         raise HTTPException(400, "that moment is not on this path")
-    if not req.message.strip():
+    known = {e["key"] for e in (branch.model or {}).get("events", []) if not e.get("head")}
+    if req.event_key and req.event_key not in known:
+        raise HTTPException(404, "that possibility is not on this path")
+    if not req.event_key and not req.message.strip():
         raise HTTPException(400, "say what you would decide")
     with branch_ops.lock:
         branch = db.get_branch(branch_id)[0]
-        return branch_ops.add_commit(person, branch, step, req.message.strip())
+        return branch_ops.add_commit(person, branch, step, req.message.strip(), req.event_key)
 
 
 @app.post("/branches/{branch_id}/undo")
@@ -276,6 +343,11 @@ def undo(branch_id: str, req: UndoRequest, token: str = Depends(bearer)) -> Bran
         raise HTTPException(409, f"this path is {branch.status}")
     if not branch.commits or (req.commit_id and req.commit_id not in {c.id for c in branch.commits}):
         raise HTTPException(404, "there is no such commit to undo")
+    target = next(c for c in branch.commits if c.id == (req.commit_id or branch.commits[-1].id))
+    nested = [s for s in db.list_scenarios(person.id) if s.assuming_branch_id == branch.id and s.fork_at and target.at <= s.fork_at]
+    if nested:
+        raise HTTPException(409, f"another decision (“{nested[0].situation[:60]}”) splits off this path after that step and "
+                                 "rests on it; it cannot be undone while that decision exists")
     with branch_ops.lock:
         branch = db.get_branch(branch_id)[0]
         return branch_ops.undo_commit(person, branch, req.commit_id)
@@ -292,6 +364,7 @@ def _distinctive(branch: Branch, years, siblings: list) -> list[dict]:
         ranked = sorted(events, key=lambda k: (final[k].share if k in final else 0) - elsewhere(k), reverse=True)
         found = [{"key": k} for k in ranked[:5] if k in final and final[k].share - elsewhere(k) > 0.1]
     return [{"branch_id": branch.id, "key": f["key"], "label": events[f["key"]]["label"],
+             "probability": final[f["key"]].probability if f["key"] in final else events[f["key"]].get("probability", 0.0),
              "words": final[f["key"]].words if f["key"] in final else events[f["key"]]["words"],
              "basis": events[f["key"]]["basis"]} for f in found if f["key"] in events]
 
@@ -301,17 +374,14 @@ def compare(a: str, b: str, c: Optional[str] = None, token: str = Depends(bearer
     picked = [owned_branch(token, bid) for bid in (a, b, c) if bid]
     span = min(len(years) for _, _, years in picked)
     if span == 0:  # at least one of them is still forming
-        return {"branches": [branch for _, branch, _ in picked], "checkpoints": [], "distinctive": []}
-    if picked[0][1].span.unit == "years":
-        marks = list(range(COMPARE_EVERY - 1, span, COMPARE_EVERY))
-    else:  # short horizons: a handful of evenly spaced moments, always including the last
-        marks = sorted({round((span - 1) * f) for f in (0.0, 0.34, 0.67, 1.0)})
+        return {"branches": [branch for _, branch, _ in picked], "checkpoints": [], "distinctive": [], "measures": {}, "money_end": {}}
+    marks = sorted({round((span - 1) * f) for f in (0.0, 0.34, 0.67, 1.0)})  # a handful of moments, always the first and the last
     shared = set.intersection(*[set(years[0].outlook) for _, _, years in picked]) if span else set()
     labels = {e["key"]: e["label"] for _, branch, _ in picked for e in (branch.model or {}).get("events", [])}
     checkpoints = []
     for i in marks:
         rows = []
-        for aspect in (k for k in picked[0][2][i].outlook if k in shared):
+        for aspect in (k for k in picked[0][2][i].outlook if k in shared and k != "choice"):
             values = [{"branch_id": branch.id, **years[i].outlook[aspect].model_dump()} for _, branch, years in picked]
             differs = len({v["value"] for v in values}) > 1 or len({v["words"] for v in values}) > 1
             rows.append({"aspect": aspect, "label": labels.get(aspect, aspect.replace("_", " ")),
@@ -322,7 +392,9 @@ def compare(a: str, b: str, c: Optional[str] = None, token: str = Depends(bearer
     for _, branch, years in picked:
         siblings = [(o, ys) for _, o, ys in picked if o.id != branch.id]
         distinctive += _distinctive(branch, years, siblings)
-    return {"branches": [branch for _, branch, _ in picked], "checkpoints": checkpoints, "distinctive": distinctive}
+    return {"branches": [branch for _, branch, _ in picked], "checkpoints": checkpoints, "distinctive": distinctive,
+            "measures": {branch.id: (branch.measures or {}).get("end") for _, branch, _ in picked},
+            "money_end": {branch.id: (branch.measures or {}).get("money_end") for _, branch, _ in picked}}
 
 
 @app.get("/lives")
@@ -400,7 +472,9 @@ def merge(req: MergeRequest, token: str = Depends(bearer)):
         id=sha1(f"{branch.id}|decision".encode()).hexdigest()[:16], person_id=branch.person_id,
         source="told", branch_id="main", date=today(), domain="career", event_type="decision",
         payload={**{k: v for k, v in branch.assumption.items() if k in branch_ops.STATE_FIELDS},
-                 "from_branch": branch.id}, confidence=1.0, text=f"chose: {branch.label}",
+                 "from_branch": branch.id, "label": branch.label}, confidence=1.0,
+        # HEAD is the one step a merge commits: main records the choice in the words of step zero
+        text=next((e["label"] for e in (branch.model or {}).get("events", []) if e.get("head")), f"chose: {branch.label}"),
     )
     get_store().append([told])
     with branch_ops.lock:
@@ -487,12 +561,29 @@ def inventory(person_id: str, token: str = Depends(bearer)):
         sources.append({"source": "simulated", "count": simulated, "newest": today(), "examples": []})
     return {
         "sources": sources,
+        "offerings": store.origins(person_id),  # each can be forgotten on its own with POST /forget
         "handles": [{"source": s, "handle": h} for s, h in db.submitted_handles(person_id).items()],
+        "money": db.get_person(person_id).money,  # income / net worth, if the person gave them; encrypted at rest
         "cached_pages": len(list(links.cache_dir(person_id).glob("*.json"))) if links.cache_dir(person_id).exists() else 0,
-        "sent_to_llm": ["public pages you pointed Hereafter at", "your own words", "chat excerpts with other people's names replaced",
+        "sent_to_llm": ["public pages you pointed Hereafter at", "your own words", "chat excerpts with other people's names replaced", "your own messages from assistant conversation exports",
                         "simulated event logs, for narration"] if llm.enabled() else [],
-        "stored_nowhere": ["raw chat exports", "uploaded files", "other people's names", "passwords or logins of any kind"],
+        "stored_nowhere": ["raw chat exports", "assistant conversation exports (only your side is read, none of it is kept)", "uploaded files", "other people's names", "passwords or logins of any kind"],
     }
+
+
+@app.post("/forget")
+def forget(req: ForgetRequest, token: str = Depends(bearer)):
+    """Forget one offering: everything on main that came from that upload, link or note goes.
+    Narrower than erase, same principle — the past cannot be rewritten, but what you gave can be
+    taken back. Open branches keep their shape until they are next re-simulated."""
+    owner(token, req.person_id)
+    if req.person_id == security.DEMO_ID:
+        raise HTTPException(409, "the demo person reseeds itself")
+    removed = get_store().forget(req.person_id, req.origin)
+    from . import state as state_module
+    for key in [k for k in state_module._cache if k[0] == req.person_id]:
+        state_module._cache.pop(key, None)
+    return {"origin": req.origin, "removed": removed}
 
 
 @app.post("/erase")

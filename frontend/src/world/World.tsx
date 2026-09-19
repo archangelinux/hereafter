@@ -1,5 +1,6 @@
-// The world: the branch timeline as a place. A winding trail of rounded stepping stones resting on
-// soft floating islets; at a decision the trail opens like a river delta.
+// The world: the branch timeline as a place. Main is one smooth flowing band of stone through the sky.
+// Circles appear only where a decision is made: a large plaza for a life decision, whose options leave in
+// entirely different directions; a small round for a day-to-day one, whose options are thin handles and stubs.
 //
 // DROP-IN for `Line` (src/line/Line.tsx): it takes exactly the same props. Mount it full-bleed;
 // the sky is transparent, so the page's own gradient shows through behind it.
@@ -9,6 +10,9 @@
 //       inside what is left: the overview frames the whole delta in the clear middle, the walked figure
 //       stands left-of-centre in it, and no in-scene label is ever placed under the HUD.
 //       e.g. <World {...viewProps} safeInsets={{ top: 24, right: 24, bottom: 210, left: 370 }} />
+//   onFocusScenario?(scenarioId)  — a COLLAPSED decision's circle was clicked: open that decision. (A scenario
+//       with `collapsed: true` is drawn as its circle only, with its name on hover. If this prop is not
+//       given, the click falls back to onSwitch(first branch of that scenario).)
 //   onArrive?(eventId, branchId)  — the figure has walked up to an event's landmark (a waypoint)
 //   onWalking?(moving)            — the figure set off / came to rest (for footstep sound, HUD state)
 // The walk itself is driven by the existing cursor props: set `activeId` + `hereStep` and the figure
@@ -24,9 +28,10 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import type { BranchView, BranchYear, LifeEvent, Scenario } from '../types'
 import { LabelLayer, LabelProjector, type Insets, type LabelSpec } from './Labels'
 import { Mark } from './Marks'
-import { along, DS, layoutRare, layoutWorld, type LaneSpec, type WorldLayout } from './layout'
-import { Past, Seeds, Sky } from './Scenery'
-import { RareTrail, Trail } from './Trail'
+import { along, dOfS, DS, layoutRare, layoutWorld, type LaneSpec, type WorldLayout } from './layout'
+import { Band } from './Band'
+import { createRibbon, ribbonMaterial, writeRibbon } from './ribbon'
+import { Main, Plazas, Seeds, Sky } from './Scenery'
 import { newWalkerState, Walker, type WalkerState } from './Walker'
 import './world.css'
 
@@ -42,6 +47,7 @@ export interface WorldProps {
   onSeek: (branchId: string, step: number) => void
   onOpenLog: () => void
   safeInsets?: Partial<Insets>
+  onFocusScenario?: (scenarioId: string) => void
   onArrive?: (eventId: string, branchId: string) => void
   onWalking?: (moving: boolean) => void
 }
@@ -63,10 +69,11 @@ interface View {
   k: number // zoom on top of the framing
 }
 
-export function World({ now, events, views, scenarios, activeId, hereStep, rare, onSwitch, onSeek, onOpenLog, safeInsets, onArrive, onWalking }: WorldProps) {
+export function World({ now, events, views, scenarios, activeId, hereStep, rare, onSwitch, onSeek, onOpenLog, safeInsets, onFocusScenario, onArrive, onWalking }: WorldProps) {
   const still = useReducedMotion()
   const insets = useMemo<Insets>(() => ({ top: 24, right: 24, bottom: 24, left: 24, ...safeInsets }), [safeInsets?.top, safeInsets?.right, safeInsets?.bottom, safeInsets?.left]) // eslint-disable-line react-hooks/exhaustive-deps
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [hoveredPlaza, setHoveredPlaza] = useState<string | null>(null)
   const [arrivedId, setArrivedId] = useState<string | null>(null) // the one landmark the figure is standing by: only it speaks
   const labelEls = useRef(new Map<string, HTMLElement>())
   const layout = useMemo(() => layoutWorld({ now, events, views, scenarios }), [now, events, views, scenarios])
@@ -102,7 +109,16 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
   }, [layout])
 
   const active = layout.lanes.find((l) => l.id === activeId) ?? null
-  const target = active && hereStep !== null ? { lane: active, d: Math.min(active.drawLen, (hereStep + 0.6) * active.stepLen) } : active ? { lane: active, d: Math.min(active.drawLen, 0.6 * active.stepLen) } : null
+  // how many steps the cursor just moved: one press is one step; a click far ahead walks through the ones between
+  const prevStep = useRef<{ lane: string | null; step: number }>({ lane: null, step: 0 })
+  const stepNow = hereStep ?? 0
+  const jumped = prevStep.current.lane === activeId ? Math.max(1, Math.abs(stepNow - prevStep.current.step)) : 1
+  useEffect(() => {
+    prevStep.current = { lane: activeId, step: stepNow }
+  }, [activeId, stepNow])
+  const target = active && hereStep !== null
+    ? { lane: active, d: Math.min(active.status === 'open' ? active.fullLen : Math.max(active.drawLen, active.fullLen), dOfS(active, hereStep + 0.6)), steps: jumped }
+    : active ? { lane: active, d: dOfS(active, 0.6), steps: 1 } : null
   // a branch that runs down the screen (a side-stream) wants the figure high in the frame, not low
   const downhill = useMemo(() => {
     if (!active) return false
@@ -110,12 +126,10 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
     const b = along(active.samples, Math.min(active.drawLen, 5))
     return -(b.x - a.x) - (b.z - a.z) < 0
   }, [active])
-  const rarePoints = useMemo(() => {
-    if (!active || !rare) return []
+  const rareTagAt = useMemo(() => {
+    if (!active || !rare) return null
     const r = layoutRare(active, rare)
-    const out: { x: number; y: number; z: number }[] = []
-    for (let d = 0.9; d <= r.len; d += 0.55) out.push(along(r.samples, d))
-    return out
+    return along(r.samples, Math.min(r.len, active.big ? 3.4 : 2.2))
   }, [active, rare])
   const hereLabel = active && hereStep !== null ? (active.view.years[hereStep]?.label ?? null) : null
 
@@ -127,7 +141,7 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
   // names and captions live in one layer over the canvas, where they can be kept apart from each other and from the HUD
   const labels = useMemo<LabelSpec[]>(() => {
     const out: LabelSpec[] = [
-      { id: 'here', priority: 100, align: 'above', className: 'hw-here', node: hereLabel ?? 'now', at: () => ({ x: walker.current.x, y: walker.current.y + 1.2, z: walker.current.z }) },
+      ...(active && arrivedId ? [] : [{ id: 'here', priority: 100, align: 'above' as const, className: 'hw-here', node: hereLabel ?? 'now', at: () => ({ x: walker.current.x, y: walker.current.y + 1.2, z: walker.current.z }) }]),
     ]
     for (const lane of layout.lanes) {
       const settled = lane.status !== 'open' && lane.status !== 'faded'
@@ -137,14 +151,15 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
       const p = along(lane.samples, lane.tagD)
       out.push({
         id: `lane:${lane.id}`,
-        priority: hovered ? 95 : lane.status === 'open' ? 50 + lane.fullLen : 20,
+        priority: hovered ? 95 : lane.status === 'open' ? (lane.big ? 70 : 40) : 20,
+        always: lane.atNow && lane.status === 'open' && !activeId,
         align: lane.side === -1 && lane.status !== 'merged' ? 'left' : 'right',
-        className: `hw-tag hw-tag--${lane.status}`,
+        className: `hw-tag hw-tag--${lane.status} ${lane.big ? '' : 'hw-tag--small'}`,
         at: () => ({ x: p.x, y: p.y + 0.3, z: p.z }),
         onClick: () => onSwitch(lane.id),
         node: (
           <>
-            <span className="hw-tag__name" style={lane.status === 'open' ? { color: lane.accent } : undefined}>
+            <span className="hw-tag__name">
               {lane.example ? 'an example · ' : ''}
               {lane.view.branch.label}
             </span>
@@ -153,15 +168,20 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
         ),
       })
     }
-    if (rarePoints.length > 6) {
-      const p = rarePoints[6]
+    for (const plaza of layout.plazas) {
+      const hovered = hoveredPlaza === plaza.id
+      if (!hovered && (activeId || plaza.collapsed || !plaza.big || !plaza.onMain)) continue
+      out.push({ id: `plaza:${plaza.id}`, priority: hovered ? 96 : 60, align: 'left', className: 'hw-tag hw-tag--plaza', at: () => ({ x: plaza.at.x - Math.cos(plaza.at.heading) * (plaza.r + 0.3), y: plaza.at.y, z: plaza.at.z - Math.sin(plaza.at.heading) * (plaza.r + 0.3) }), node: <span className="hw-tag__note">{plaza.label}</span> })
+    }
+    if (rareTagAt) {
+      const p = rareTagAt
       out.push({ id: 'rare', priority: 80, align: active?.side === -1 ? 'left' : 'right', className: 'hw-tag hw-tag--rare', at: () => ({ x: p.x, y: p.y + 0.3, z: p.z }), node: <span className="hw-tag__note">the rarest life here</span> })
     }
     if (!activeId)
       for (const seed of layout.main.seeds)
         out.push({ id: `seed:${seed.id}`, priority: 30, align: 'left', className: 'hw-tag hw-tag--seed', at: () => ({ x: seed.at.x, y: seed.at.y + 0.7, z: seed.at.z }), node: (<><span className="hw-tag__note">{seed.caption}</span><span className="hw-tag__aside">{seed.label}</span></>) })
     return out
-  }, [layout, activeId, hoveredId, hereLabel, onSwitch, rarePoints, active])
+  }, [layout, activeId, hoveredId, hereLabel, onSwitch, rareTagAt, active, hoveredPlaza, arrivedId])
 
   const onWheel = (e: ReactWheelEvent) => {
     view.current.k = Math.max(0.55, Math.min(3, view.current.k * Math.exp(-e.deltaY * 0.0016)))
@@ -185,25 +205,27 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
   return (
     <div className="hw-world" onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
       <Canvas orthographic flat camera={{ position: [60, 55, 60], zoom: 24, near: 0.1, far: 500 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }}>
-        <Rig layout={layout} walker={walker} following={!!active} downhill={downhill} view={view} insets={insets} still={still} onWalking={onWalking} />
+        <Rig layout={layout} walker={walker} following={!!active} close={!!active && !active.big} downhill={downhill} view={view} insets={insets} still={still} onWalking={onWalking} />
         <LabelProjector specs={labels} els={labelEls} insets={insets} />
         <Sky still={still} />
-        <Past layout={layout} still={still} onOpenLog={onOpenLog} />
+        <Main layout={layout} still={still} />
         <Seeds layout={layout} still={still} />
+
+        {layout.main.nodes.map((n) => (
+          <Mark key={n.id} node={n} at={n.at} laneId={null} width={1.15} walked={false} speaking={false} pale={1} still={still} walker={walker} onPick={onOpenLog} />
+        ))}
 
         {[...layout.lanes, ...leaving.filter((l) => !layout.lanes.some((x) => x.id === l.id))].map((lane) => {
           const isLeaving = !layout.lanes.includes(lane)
           const isActive = lane.id === activeId
-          const closed = lane.status === 'faded' || lane.status === 'stale' || lane.status === 'expired'
-          const pale = (active && !isActive ? 0.38 : 1) * (lane.example ? 0.8 : 1)
+          const pale = (active && !isActive ? 0.5 : 1) * (lane.example ? 0.8 : 1)
           return (
             <group key={lane.id}>
-              <Trail
+              <Band
                 spec={lane}
                 fresh={freshEver.current.has(lane.id)}
                 leaving={isLeaving}
                 active={isActive}
-                activeStep={isActive ? hereStep : null}
                 dim={!!active && !isActive}
                 still={still}
                 onGone={() => setLeaving((prev) => prev.filter((p) => p.id !== lane.id))}
@@ -212,14 +234,14 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
                 onSeek={(step) => onSeek(lane.id, step)}
               />
               {!isLeaving &&
-                (isActive ? lane.nodes : active ? [] : hintsOf(lane)).map((n, i) => (
+                (isActive ? lane.nodes : active ? [] : hintsOf(lane)).map((n) => (
                   <Mark
                     key={n.id}
                     node={n}
                     at={along(lane.samples, n.d)}
                     laneId={lane.id}
-                    family={lane.status === 'merged' && n.d <= lane.stoneLen ? 'past' : closed ? 'ruin' : 'open'}
-                    side={(i % 2 === 0 ? lane.side : -lane.side) as 1 | -1}
+                    width={lane.width}
+                    sink={lane.status === 'faded' || lane.status === 'stale' || lane.status === 'expired' ? 0.42 * Math.min(1, n.d / 2.6) : 0}
                     walked={isActive}
                     speaking={isActive && arrivedId === n.id}
                     pale={pale}
@@ -233,7 +255,9 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
           )
         })}
 
-        {active && rare && <RareTrail points={rarePoints} still={still} />}
+        {/* circles only where a decision is made; drawn over the bands that meet there */}
+        <Plazas plazas={layout.plazas} still={still} onHover={setHoveredPlaza} onPick={(p) => (onFocusScenario ? onFocusScenario(p.id) : p.branchIds[0] && onSwitch(p.branchIds[0]))} />
+        {active && rare && <RareStrand lane={active} years={rare} still={still} />}
         <Walker layout={layout} target={target} state={walker} still={still} />
       </Canvas>
       <LabelLayer specs={labels} els={labelEls} />
@@ -256,21 +280,47 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
 
 export default World
 
-/** On a branch you are not on: at most two quiet hints of what happens there, where it is still stone. */
+/** On a branch you are not on: at most two quiet marks of what happens there, where it is still stone. */
 function hintsOf(lane: LaneSpec) {
-  const onStone = lane.nodes.filter((n) => n.kind === 'event' && n.basis !== 'background' && n.d > 1.5 && n.d < lane.drawLen - 0.5 && lane.built[Math.round(n.d / DS)] >= 0.5)
+  if (!lane.big) return []
+  const onStone = lane.nodes.filter((n) => n.kind === 'event' && n.basis !== 'background' && n.d > 2.8 && n.d < lane.drawLen - 0.5 && lane.built[Math.round(n.d / DS)] >= 0.5)
   const sourced = onStone.filter((n) => n.basis === 'sourced')
-  return (sourced.length ? sourced : onStone).slice(0, lane.small ? 1 : 2)
+  return (sourced.length ? sourced : onStone).slice(0, 2)
+}
+
+/** The rarest life on the active branch: a hair-thin dotted strand peeling off beside it. */
+function RareStrand({ lane, years, still }: { lane: LaneSpec; years: BranchYear[]; still: boolean }) {
+  const rare = useMemo(() => layoutRare(lane, years), [lane, years])
+  const geometry = useMemo(() => {
+    const g = createRibbon(rare.samples.length)
+    writeRibbon(g, { samples: rare.samples, built: new Float32Array(rare.samples.length).fill(1), firm: () => 0, width: 0.09, sink: 0, phase: 0, thick: 0.05, start: 0, end: rare.len })
+    return g
+  }, [rare])
+  const material = useMemo(() => {
+    const m = ribbonMaterial()
+    for (const k of ['uOpenTop', 'uOpenX', 'uOpenZ']) m.uniforms[k].value = new THREE.Color('#C4705A')
+    m.uniforms.uDash.value = 3.4
+    return m
+  }, [])
+  const grow = useRef(still ? 1e6 : 0)
+  useEffect(() => () => (geometry.dispose(), material.dispose()), [geometry, material])
+  useFrame((state, dt) => {
+    grow.current = Math.min(rare.len + 1, grow.current + dt * Math.max(3, rare.len / 2.5))
+    material.uniforms.uGrow.value = grow.current
+    material.uniforms.uTime.value = still ? 0 : state.clock.elapsedTime
+  })
+  return <mesh geometry={geometry} material={material} frustumCulled={false} renderOrder={5} />
 }
 
 // ---------------------------------------------------------------- the camera
 
 // A fixed, gentle, near-isometric gaze. Only the point it rests on and how closely it looks change.
-const GAZE = new THREE.Vector3(1, 0.92, 1).normalize()
-const RIGHT = new THREE.Vector3(1, 0, -1).normalize()
+const gazeParam = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('gaze') : null
+const GAZE = (gazeParam === '1' ? new THREE.Vector3(1, 0.35, 0.3) : gazeParam === '2' ? new THREE.Vector3(-0.4, 1.6, 1) : new THREE.Vector3(1, 0.92, 1)).normalize() // ?gaze=1|2: only for inspecting joins and ends
+const RIGHT = new THREE.Vector3(GAZE.z, 0, -GAZE.x).normalize()
 const UP = new THREE.Vector3(0, 1, 0).addScaledVector(GAZE, -GAZE.y).normalize()
 
-function Rig({ layout, walker, following, downhill, view, insets, still, onWalking }: { downhill: boolean; layout: WorldLayout; walker: React.RefObject<WalkerState>; following: boolean; view: React.RefObject<View>; insets: Insets; still: boolean; onWalking?: (moving: boolean) => void }) {
+function Rig({ layout, walker, following, close, downhill, view, insets, still, onWalking }: { downhill: boolean; close: boolean; layout: WorldLayout; walker: React.RefObject<WalkerState>; following: boolean; view: React.RefObject<View>; insets: Insets; still: boolean; onWalking?: (moving: boolean) => void }) {
   const size = useThree((s) => s.size)
   const at = useRef<THREE.Vector3 | null>(null)
   const zoom = useRef<number | null>(null)
@@ -308,12 +358,13 @@ function Rig({ layout, walker, following, downhill, view, insets, still, onWalki
     if (following || w.laneId) {
       // walking: the figure left of centre and low in the clear area, its branch running up and to the right
       want.set(w.x, w.y, w.z)
-      wantZoom = Math.max(30, Math.min(58, Math.min(safeW / 22, safeH / 12)))
+      // a small decision is a short thing: come in close, so its offshoot fills the view rather than hiding under the figure
+      wantZoom = close ? Math.max(30, Math.min(84, Math.min(safeW / 13, safeH / 8))) : Math.max(20, Math.min(58, Math.min(safeW / 22, safeH / 12)))
       fx = insets.left + safeW * 0.36
       fy = insets.top + safeH * (downhill ? 0.3 : 0.64)
     } else {
       want.copy(fit.centre)
-      wantZoom = Math.max(10, Math.min(46, Math.min(safeW / fit.w, safeH / fit.h)))
+      wantZoom = Math.max(7, Math.min(46, Math.min(safeW / fit.w, safeH / fit.h)))
       fx = insets.left + safeW / 2
       fy = insets.top + safeH / 2
     }

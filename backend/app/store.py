@@ -31,6 +31,8 @@ class EventStore(Protocol):
     def search_evidence(self, person_id: str, branch_id: str, text: str, size: int = 8) -> list[Evidence]: ...
     def counts_by_source(self, person_id: str) -> dict[str, int]: ...
     def erase(self, person_id: str) -> dict[str, int]: ...
+    def origins(self, person_id: str) -> list[dict]: ...
+    def forget(self, person_id: str, origin: str) -> int: ...
     def index_runs(self, branch, outcome, dates: list[str]) -> None: ...
     def distinctive(self, branch, siblings: list) -> list[dict] | None: ...
     def rarest_keys(self, branch) -> list[str] | None: ...
@@ -52,6 +54,7 @@ class ElasticStore:
             "event_type": {"type": "keyword"},
             "payload": {"type": "object", "enabled": False},
             "confidence": {"type": "float"},
+            "origin": {"type": "keyword"},
             "text": {"type": "text", "copy_to": "text_semantic"},
             "text_semantic": {"type": "semantic_text", "inference_id": config.ES_INFERENCE_ID},
         }
@@ -90,6 +93,8 @@ class ElasticStore:
         else:
             props = self.es.indices.get_mapping(index=self.index)[self.index]["mappings"]["properties"]
             self.semantic = "text_semantic" in props
+            if "origin" not in props:  # older index: add the field that lets one upload be forgotten
+                self.es.indices.put_mapping(index=self.index, properties={"origin": {"type": "keyword"}})
         self.runs_index = config.ES_RUNS_INDEX
         if not self.es.indices.exists(index=self.runs_index):
             keyword = {"type": "keyword"}
@@ -272,7 +277,8 @@ class ElasticStore:
         import numpy as np
         from elasticsearch import helpers
 
-        events = branch.model.get("events", [])
+        by_key = {e["key"]: e for e in branch.model.get("events", [])}
+        events = [by_key[k] for k in outcome.keys]  # the sampler's own (canonical) order
         if not events:
             return
         hits = np.argwhere(outcome.fired)[: self.MAX_RUN_DOCS]
@@ -320,6 +326,25 @@ class ElasticStore:
         if not resp["hits"]["total"]["value"]:
             return None
         return [b["key"] for b in sorted(resp["aggregations"]["rare"]["buckets"], key=lambda b: b["doc_count"])]
+
+    def origins(self, person_id: str) -> list[dict]:
+        """What the person has offered, by origin, with how much each contributed to main."""
+        resp = self.es.search(
+            index=self.index, size=0,
+            query={"bool": {"filter": self._filter(person_id), "must": {"exists": {"field": "origin"}}}},
+            aggs={"o": {"terms": {"field": "origin", "size": 200},
+                        "aggs": {"newest": {"max": {"field": "date"}}, "source": {"terms": {"field": "source", "size": 1}}}}},
+        )
+        return [{"origin": b["key"], "count": b["doc_count"], "newest": (b["newest"].get("value_as_string") or "")[:10],
+                 "source": (b["source"]["buckets"] or [{"key": ""}])[0]["key"]} for b in resp["aggregations"]["o"]["buckets"]]
+
+    def forget(self, person_id: str, origin: str) -> int:
+        """Remove everything on main that came from one offering. Owner-only, like erase."""
+        resp = self.es.delete_by_query(
+            index=self.index, refresh=True, conflicts="proceed",
+            query={"bool": {"filter": [*self._filter(person_id), {"term": {"origin": origin}}]}},
+        )
+        return resp["deleted"]
 
     def erase(self, person_id: str) -> dict[str, int]:
         """The one deletion the system allows: the owner burning their own book."""
@@ -432,6 +457,23 @@ class LocalStore:
 
     def rarest_keys(self, branch) -> list[str] | None:
         return None
+
+    def origins(self, person_id: str) -> list[dict]:
+        found: dict[str, dict] = {}
+        for e in self.events(person_id):
+            if e.origin:
+                row = found.setdefault(e.origin, {"origin": e.origin, "count": 0, "newest": "", "source": e.source})
+                row["count"] += 1
+                row["newest"] = max(row["newest"], e.date)
+        return list(found.values())
+
+    def forget(self, person_id: str, origin: str) -> int:
+        ids = [e.id for e in self.events(person_id) if e.origin == origin]
+        with db._lock:
+            c = db.conn()
+            c.executemany("DELETE FROM events WHERE id=? AND person_id=? AND branch_id='main'", [(i, person_id) for i in ids])
+            c.commit()
+        return len(ids)
 
     def erase(self, person_id: str) -> dict[str, int]:
         c = db.conn()

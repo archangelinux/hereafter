@@ -59,7 +59,7 @@ function join(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
 }
 
 /** A pebble: a squashed cylinder with soft shoulders. Unit radius, top at y = 0. */
-function pebble(height: number, bevel: number) {
+function pebble(height: number, bevel: number, segments = 28) {
   const pts: THREE.Vector2[] = [new THREE.Vector2(0.0001, 0)]
   const steps = 6
   pts.push(new THREE.Vector2(1 - bevel, 0))
@@ -72,7 +72,7 @@ function pebble(height: number, bevel: number) {
     pts.push(new THREE.Vector2(1 - bevel + Math.cos(a) * bevel, -height + bevel - Math.sin(a) * bevel))
   }
   pts.push(new THREE.Vector2(0.0001, -height))
-  const g = new THREE.LatheGeometry(pts.reverse(), 28)
+  const g = new THREE.LatheGeometry(pts.reverse(), segments)
   // whichever way the profile was wound, make the normals face outward: the top must look up
   const pos = g.getAttribute('position')
   const n = g.getAttribute('normal')
@@ -182,10 +182,10 @@ export function pennantGeometry() {
   })
 }
 
-// ---- the figure, in parts so that it can walk: small, soft, a little pear-shaped, with a scarf and a satchel
+// ---- the figure: a rounded coral body, two small arms, a cream head, small feet. A normal, simple little person.
 export const figureBody = () =>
   cached('figure:body', () => {
-    const g = new THREE.CapsuleGeometry(0.13, 0.2, 8, 18)
+    const g = new THREE.CapsuleGeometry(0.13, 0.2, 10, 28)
     const pos = g.getAttribute('position')
     for (let i = 0; i < pos.count; i++) {
       const y = pos.getY(i)
@@ -195,11 +195,19 @@ export const figureBody = () =>
     g.computeVertexNormals()
     return paintSoft(g.translate(0, 0.27, 0), stone.coral)
   })
-export const figureHead = () => cached('figure:head', () => paintSoft(new THREE.SphereGeometry(0.105, 18, 14), stone.open))
-export const figureFoot = () => cached('figure:foot', () => paintSoft(new THREE.SphereGeometry(0.05, 10, 8).scale(1, 0.7, 1.4), stone.roof))
-export const figureScarf = () => cached('figure:scarf', () => paintSoft(new THREE.TorusGeometry(0.085, 0.032, 8, 18).rotateX(Math.PI / 2), stone.past))
-export const figureScarfTail = () => cached('figure:tail', () => paintSoft(new THREE.CapsuleGeometry(0.026, 0.16, 4, 8).translate(0, -0.1, 0), stone.past))
-export const figureSatchel = () => cached('figure:satchel', () => paintSoft(new THREE.SphereGeometry(0.075, 12, 10).scale(0.7, 0.9, 1.1), stone.bark))
+export const figureHead = () => cached('figure:head', () => paintSoft(new THREE.SphereGeometry(0.105, 24, 18), stone.open))
+export const figureFoot = () => cached('figure:foot', () => paintSoft(new THREE.SphereGeometry(0.05, 12, 10).scale(1, 0.7, 1.4), stone.roof))
+/** a short soft arm, hanging from its shoulder: the pivot is the top of the capsule */
+export const figureArm = () => cached('figure:arm', () => paintSoft(new THREE.CapsuleGeometry(0.021, 0.078, 8, 16).translate(0, -0.052, 0), stone.open)) // small, and the same cream as the head
+/** where you are: a thin ring around the figure's feet. It lives in the figure's own group, so the two can never come apart. */
+export const figureRing = () => cached('figure:ring', () => new THREE.TorusGeometry(0.27, 0.014, 8, 48).rotateX(Math.PI / 2))
+
+/** a decision's circle: a simple, perfect, low cylinder with a crisp rim. Unit radius, top at y = 0, unit depth. */
+export const plazaGeometry = (family: StoneFamily) =>
+  cached(`plaza:${family}`, () => {
+    const g = new THREE.CylinderGeometry(1, 1, 1, 96, 1, false).translate(0, -0.5, 0)
+    return paintSoft(g, stone[family])
+  })
 
 export const seedGeometry = () => cached('seed', () => paintSoft(new THREE.SphereGeometry(0.15, 16, 12).scale(0.85, 1.2, 0.85), stone.gold))
 
@@ -235,4 +243,4 @@ export function softMaterial(opacity = 1): THREE.MeshBasicMaterial {
 }
 
 /** the slow swell everything rides on; the ribbon shader uses the same wave */
-export const swell = (x: number, z: number, time: number) => 0.05 * Math.sin(time * 0.45 + x * 0.22 + z * 0.17)
+export const swell = (_x: number, _z: number, time: number) => 0.05 * Math.sin(time * 0.45) // one swell for the whole world, so everything that touches stays flush

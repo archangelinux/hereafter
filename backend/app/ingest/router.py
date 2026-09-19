@@ -1,6 +1,6 @@
 """Step 1 of the universal pipeline: look at each thing offered and give it one label.
 
-    handles | link | freeform | chat_export | resume | personality | unknown
+    handles | link | freeform | chat_export | ai_chat_export | resume | personality | unknown
 
 Classification is rule-based, so routing works with the LLM off. A new source type is a new
 label here; nothing downstream changes, because every label ends in the same extraction call.
@@ -9,12 +9,15 @@ label here; nothing downstream changes, because every label ends in the same ext
 from __future__ import annotations
 
 import io
+import logging
 import re
 import zipfile
 from dataclasses import dataclass, field
 
 from .. import personality
-from . import chat
+from . import ai_chat, chat
+
+log = logging.getLogger("hereafter.ingest")
 
 URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
 RESUME_HEADINGS = re.compile(
@@ -23,6 +26,10 @@ RESUME_HEADINGS = re.compile(
 )
 MAX_ZIP_MEMBERS = 40
 MAX_MEMBER_BYTES = 20_000_000
+MAX_CONVERSATIONS_BYTES = 600_000_000   # an assistant export's conversations.json can be large
+# Files inside an assistant export that describe the account, not the life: never read.
+# matched as substrings of the file name, so dated or id-suffixed names are covered too
+ACCOUNT_FILES = ("users", "user.json", "metadata", "projects", "feedback", "frames", "shared_conversations")
 
 
 @dataclass
@@ -33,6 +40,7 @@ class Offered:
     url: str = ""
     source: str = ""               # for handles: github | linkedin | site | instagram
     notes: list[str] = field(default_factory=list)
+    parsed: object = None          # ai_chat_export: the person's own messages, already separated out
 
 
 def classify_text(text: str) -> str:
@@ -77,9 +85,13 @@ def route_file(name: str, data: bytes) -> list[Offered]:
             out: list[Offered] = []
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 members = [m for m in z.infolist() if not m.is_dir()]
-                readable = [m for m in members if m.filename.lower().endswith((".txt", ".json", ".html", ".md", ".pdf"))]
+                readable = [m for m in members if m.filename.lower().endswith((".txt", ".json", ".jsonl", ".ndjson", ".html", ".md", ".pdf"))]
                 for m in readable[:MAX_ZIP_MEMBERS]:
-                    if m.file_size <= MAX_MEMBER_BYTES:
+                    base = m.filename.lower().rsplit("/", 1)[-1]
+                    if any(part in base for part in ACCOUNT_FILES):
+                        continue
+                    limit = MAX_CONVERSATIONS_BYTES if "conversation" in base else MAX_MEMBER_BYTES
+                    if m.file_size <= limit:
                         out += route_file(f"{name}/{m.filename}", z.read(m))
             return out or [Offered(name, "unknown", notes=["an archive with nothing readable inside"])]
         if lower.endswith(".pdf") or data[:5] == b"%PDF-":
@@ -91,6 +103,20 @@ def route_file(name: str, data: bytes) -> list[Offered]:
         text = ""
     if not text.strip():
         return [Offered(name, "unknown")]
+    base = lower.rsplit("/", 1)[-1]
+    if lower.endswith((".json", ".jsonl", ".ndjson")) or text.lstrip()[:1] in "[{":
+        conversations = ai_chat.parse(text)
+        if conversations is not None:
+            return [Offered(name, "ai_chat_export", parsed=conversations)]  # raw JSON is not kept
+        if ai_chat.is_manifest(text) or base.startswith("manifest"):
+            log.info("export index offered on its own; structure: %s", ai_chat.shape(text))
+            return [Offered(name, "export_index")]
+        if "memor" in base:  # an assistant's saved memories about the person
+            return [Offered(name, "assistant_memory", ai_chat.flatten(text))]
+        if any(part in base for part in ACCOUNT_FILES):
+            return [Offered(name, "account_file")]
+        if ai_chat.shape(text) != "not JSON":
+            log.info("unrecognised JSON offered (%s); structure: %s", base, ai_chat.shape(text))
     return [Offered(name, classify_text(text), text)]
 
 

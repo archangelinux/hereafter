@@ -18,6 +18,7 @@ export interface Candidate {
   prefer: 1 | -1
   colour?: string
   reach?: number // how far, in px, the label may slide along the line from its anchor
+  upOnly?: boolean // a step on a path stays with its step: it may slide up the path, never down past now
   onClick?: () => void
 }
 
@@ -30,14 +31,15 @@ export interface Placed extends Candidate {
   leader: string
 }
 
+// average advance per character at the type scale: label 12px small caps, body 16px italic, title 20px
 const CHAR: Record<LabelKind, [top: number, text: number, max: number]> = {
-  card: [6.6, 7.2, 40],
-  node: [6.6, 6.7, 38],
-  commit: [6.6, 7, 38],
-  rare: [0, 6.6, 30],
-  name: [6.6, 8.7, 30],
-  pick: [6.6, 6.7, 32],
-  log: [6.6, 6.7, 42],
+  card: [6.2, 6.8, 40],
+  node: [6.2, 6.5, 36],
+  commit: [6.2, 6.8, 36],
+  rare: [0, 6.2, 30],
+  name: [6.2, 7.6, 30],
+  pick: [6.2, 6.5, 30],
+  log: [6.2, 6.5, 38],
 }
 
 export const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s)
@@ -51,13 +53,13 @@ export function placeLabels(candidates: Candidate[], blocked: Zone[], bounds: Zo
   for (const c of ordered) {
     const [topW, textW, max] = CHAR[c.kind]
     const text = clip(c.text, max)
-    const pad = c.kind === 'card' ? 10 : 0
+    const pad = c.kind === 'card' ? 8 : 0
     const w = Math.max(c.top.length * topW, text.length * textW) + pad * 2 + 4
-    const h = (c.top && text ? 31 : 17) + pad * 2
+    const h = (c.top && text ? 36 : 20) + pad * 2
     const gap = c.kind === 'card' ? 30 : 24
     const reach = c.reach ?? 48
     const slides = [0]
-    for (let d = 16; d <= reach; d += 16) slides.push(-d, d)
+    for (let d = 20; d <= reach; d += 20) slides.push(...(c.upOnly ? [-d] : [-d, d]))
     let done = false
     for (const side of [c.prefer, -c.prefer as 1 | -1]) {
       for (const dy of slides) {

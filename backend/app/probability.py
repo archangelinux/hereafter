@@ -14,7 +14,7 @@ This module cannot import the LLM (tested), and the same inputs always give the 
 
 The result is stored on the event as `event["estimate"]`; the sampler in `sim/outcomes.py` centres
 each simulated life's draw on `estimate.likelihood` and spreads it by `estimate.spread`.
-`event["probability"]` and `event["basis"]` are never changed here, so the audit trail back to the
+`event["base_probability"]` and `event["basis"]` are never changed here, so the audit trail back to the
 published figure stays intact and `assess_events` can be re-run at any time (for instance when
 research lands and an estimated event becomes sourced).
 """
@@ -66,8 +66,8 @@ def _clip(p: float) -> float:
 def base_rate(event: dict) -> tuple[float, float]:
     """(probability, half-width) the event has before Jev: its published or personal figure with its
     own band, or the middle of its verbal bin with the bin's half-width."""
-    if event.get("basis") in ("sourced", "personal") and event.get("probability") is not None:
-        return _clip(float(event["probability"])), float(event.get("band") or 0.0)
+    if event.get("basis") in ("sourced", "personal") and event.get("base_probability") is not None:
+        return _clip(float(event["base_probability"])), float(event.get("band") or 0.0)
     lo, hi = BINS.get(event.get("bin") or DEFAULT_BIN, BINS[DEFAULT_BIN])
     return (lo + hi) / 2, (hi - lo) / 2
 
@@ -125,7 +125,7 @@ def _evidence_lines(event: dict, jev: dict, p0: float, shift: float, likelihood:
 
 
 def estimate(event: dict) -> dict:
-    """The estimate for one event. Pure: reads `basis`, `probability`, `band`, `bin` and `jev`."""
+    """The estimate for one event. Pure: reads `basis`, `base_probability`, `band`, `bin` and `jev`."""
     jev = event.get("jev") or {"category": "other"}
     p0, base_spread = base_rate(event)
     basis = event.get("basis", "estimated")
@@ -163,7 +163,10 @@ def estimate(event: dict) -> dict:
 
 
 def assess_events(events: list[dict]) -> None:
-    """Attach `estimate` to every event and keep its plain-words label in step with it. Idempotent."""
+    """Attach `estimate` to every event and keep its plain-words label in step with it. Idempotent.
+    The option itself (`head`, step zero) happens in every life and is not an outcome to score."""
     for e in events:
+        if e.get("head"):
+            continue
         e["estimate"] = estimate(e)
         e["words"] = likelihood_words(e["estimate"]["likelihood"])

@@ -8,7 +8,7 @@ from test_api import UNIS, canned_proposal, new_person, post_scenario
 
 def event(**kw):
     base = {"key": "x", "label": "x", "domain": "work", "kind": "one_time", "window": [0, 0], "basis": "estimated",
-            "bin": "rare", "probability": None, "band": 0.0, "depends_on": []}
+            "bin": "rare", "base_probability": None, "band": 0.0, "depends_on": []}
     return {**base, **kw}
 
 
@@ -34,7 +34,7 @@ def test_jev_can_nudge_a_base_rate_but_never_replace_it():
     assert 0.06 < up < 0.2, "five perfect scores cannot make a rare outcome likely"
     down = probability.estimate(event(bin="usually", jev=hopeless))["likelihood"]   # base 80%
     assert 0.5 < down < 0.8, "five terrible scores cannot make a usual outcome impossible"
-    published = event(basis="sourced", probability=0.20, jev=perfect)
+    published = event(basis="sourced", base_probability=0.20, jev=perfect)
     assert probability.estimate(published)["likelihood"] < up + 0.2 and probability.estimate(published)["likelihood"] > 0.20
     lo, hi = BINS["rare"]
     assert lo <= probability.estimate(event(bin="rare", jev=scores()))["likelihood"] <= hi
@@ -60,18 +60,18 @@ def test_an_unmet_hard_prerequisite_caps_the_outcome_and_an_unknown_one_only_wid
 
 def test_confidence_follows_the_evidence():
     weak = probability.estimate(event(bin="sometimes", jev=scores(evidence_strength=1)))
-    published = probability.estimate(event(basis="sourced", probability=0.3, jev=scores(evidence_strength=3)))
-    poor_fit = probability.estimate(event(basis="sourced", probability=0.3, band=0.15, jev=scores(evidence_strength=3)))
+    published = probability.estimate(event(basis="sourced", base_probability=0.3, jev=scores(evidence_strength=3)))
+    poor_fit = probability.estimate(event(basis="sourced", base_probability=0.3, band=0.15, jev=scores(evidence_strength=3)))
     assert weak["confidence"] < poor_fit["confidence"] < published["confidence"]
     assert published["spread"] < weak["spread"]
 
 
 def test_assess_is_idempotent_and_leaves_the_audit_trail_alone():
-    e = event(basis="sourced", probability=0.25, band=0.0, evidence_id="ev_1", jev=scores(personal_fit=5))
+    e = event(basis="sourced", base_probability=0.25, band=0.0, evidence_id="ev_1", jev=scores(personal_fit=5))
     probability.assess_events([e])
     first = dict(e["estimate"])
     probability.assess_events([e])
-    assert e["estimate"] == first and e["probability"] == 0.25 and e["basis"] == "sourced"
+    assert e["estimate"] == first and e["base_probability"] == 0.25 and e["basis"] == "sourced"
     assert e["estimate"]["base"] == {"probability": 0.25, "basis": "sourced"}
     assert e["estimate"]["evidence"][0]["evidence_id"] == "ev_1"
 
@@ -140,7 +140,7 @@ def test_scenarios_come_back_classified_scored_and_estimated(client, monkeypatch
     assert coop["blocked"] and coop["likelihood"] <= probability.HARD_CAP and coop["category"] == "career"
     finish = events["finish_degree"]["estimate"]
     assert finish["category"] == "education" and finish["likelihood"] > 0.25 and finish["confidence"] < 0.5
-    assert events["finish_degree"]["probability"] is None and events["finish_degree"]["basis"] == "estimated"
+    assert events["finish_degree"]["base_probability"] is None and events["finish_degree"]["basis"] == "estimated"
 
     shares = {k: v["share"] for k, v in made["branches"][0]["years"][-1]["outlook"].items()}
     assert shares["coop_term"] < 0.08 < 0.2 < shares["finish_degree"], "the simulation runs on the estimate"
@@ -155,6 +155,9 @@ def test_without_a_model_the_pipeline_still_runs_and_moves_nothing(client, monke
     pid, auth = new_person(client, birth_year=2008)
     made = post_scenario(client, auth, {"person_id": pid, "situation": "Which uni?", "options": UNIS})
     for e in made["branches"][0]["branch"]["model"]["events"]:
+        if e.get("head"):
+            assert "estimate" not in e and "jev" not in e, "the option itself happens in every life; there is nothing to score"
+            continue
         est = e["estimate"]
         lo, hi = BINS[e["bin"]]
         assert est["judged_by"] == "rules" and est["shift"] == 0 and abs(est["likelihood"] - (lo + hi) / 2) < 1e-3
