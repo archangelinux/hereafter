@@ -8,11 +8,11 @@ export function Tell({ busy, error, onSubmit, onClose }: { busy: boolean; error:
     if (text.trim()) onSubmit(text.trim())
   }
   return (
-    <Sheet title="Tell Hereafter something" eyebrow="onto main" lede="Something that has happened. It is added to main as of today and cannot be edited afterwards, only added to." onClose={onClose}>
+    <Sheet title="Tell Hereafter something" eyebrow="onto main" lede="Added to main, as of today." onClose={onClose}>
       <form onSubmit={submit}>
         <label className="field">
           <span className="caps">what happened</span>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} autoFocus placeholder="I told my sister about the offer." />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} autoFocus placeholder="" />
         </label>
         {error && <p className="page__error">{error}</p>}
         <div className="sheet__actions">

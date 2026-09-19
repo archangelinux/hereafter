@@ -29,3 +29,11 @@ def client(tmp_path, monkeypatch):
         yield c
     db.reset()
     store.reset()
+
+
+@pytest.fixture()
+def background(monkeypatch):
+    """The life-table background is off by default; ask for this fixture BEFORE `client` to run with it on."""
+    from app import config
+
+    monkeypatch.setattr(config, "BACKGROUND", True)

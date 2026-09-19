@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Api } from '../api'
 import { aspectLabel } from '../derive'
-import { dayLabel, inEveryTen } from '../format'
+import { dayLabel, inEveryTen, stepDate } from '../format'
 import type { Branch, BranchYear, Evidence } from '../types'
 
 interface Props {
@@ -42,11 +42,10 @@ export function EvidenceDrawer({ api, branch, ids, step, collected, onClose }: P
         <p className="caps">{collected ? 'the codex' : 'the evidence'}</p>
         <button type="button" className="quiet" onClick={onClose}>close</button>
       </header>
-      {api.offline && <p className="drawer__sample">Hereafter is offline. Researched items here are samples; the Statistics Canada figures are real.</p>}
+      {api.offline && <p className="drawer__sample">Offline sample: researched figures are illustrative; Statistics Canada figures are real.</p>}
 
       {items === null && <p className="dim">looking it up</p>}
-      {collected && <p className="dim drawer__lede">What you have come across so far, with its sources. Figures appear here and nowhere else.</p>}
-      {items?.length === 0 && (ids.length > 0 || collected) && <p className="dim">{collected ? 'Nothing gathered yet. Evidence collects here as you walk.' : 'Nothing is on file for this yet.'}</p>}
+      {items?.length === 0 && (ids.length > 0 || collected) && <p className="dim">{collected ? 'Nothing gathered yet.' : 'Nothing on file.'}</p>}
       {items?.map((e) => (
         <article key={e.id} className={`evidence evidence--${e.kind}`}>
           <p className="caps evidence__kind">{KIND[e.kind]}</p>
@@ -67,8 +66,8 @@ export function EvidenceDrawer({ api, branch, ids, step, collected, onClose }: P
 
       {step && (
         <section className="spread">
-          <p className="caps">how the thousand lives spread · {step.label}</p>
-          <p className="dim spread__lede">The page follows the most typical of a thousand simulated lives. This is how many of the others agree with it at this point.</p>
+          <p className="caps">how the thousand lives spread · {stepDate(step.at)}</p>
+          <p className="dim spread__lede">How many of the thousand simulated lives agree.</p>
           <ul>
             {Object.entries(step.outlook).map(([aspect, o]) => (
               <li key={aspect}>

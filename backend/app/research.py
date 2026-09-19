@@ -176,8 +176,20 @@ def _apply(branch, leads: list[Lead]) -> list[Evidence]:
                 used_for = "how hard buying a home is here, relative to the national picture behind the ownership table"
             # Rents are kept as evidence for the narrative only: a room in a shared flat and a whole
             # apartment are not comparable, so a rent never sets a simulator parameter.
+            evidence_id = _evidence_id(branch.id, lead.url, fact.claim)
+            kind = {"salary": "salary", "monthly_rent": "rent"}.get(lead.parameter)
+            target = next((e for e in sorted(branch.model.get("events", []), key=lambda e: e["window"][0])
+                           if kind and e.get("money_kind") == kind and not e.get("money_amount")), None)
+            sane = value and ((kind == "salary" and 15_000 < value < 2_000_000 and "month" not in (fact.unit or "").lower()
+                               and "hour" not in (fact.unit or "").lower())
+                              or (kind == "rent" and 300 < value < 8_000 and "month" in (fact.unit or "").lower()))
+            if target and sane:
+                target["money_amount"] = {"value": value if kind == "salary" else -value, "currency": fact.currency or ("CAD" if branches.in_canada(city) else "USD"),
+                                          "per": "year" if kind == "salary" else "month", "evidence_id": evidence_id}
+                target["effects_basis"] = "sourced"
+                used_for = (used_for + "; " if used_for else "") + f"the money ledger, from “{target['label']}” on"
             out.append(Evidence(
-                id=_evidence_id(branch.id, lead.url, fact.claim), person_id=branch.person_id, branch_id=branch.id,
+                id=evidence_id, person_id=branch.person_id, branch_id=branch.id,
                 kind="researched", claim=fact.claim, value=f"{value:,.0f}" if value else None,
                 unit=" ".join(x for x in (fact.currency, fact.unit) if x) or None,
                 source_title=lead.title, source_url=lead.url, retrieved_at=date.today().isoformat(),
@@ -205,7 +217,7 @@ def _apply_rates(branch, leads: list[Lead]) -> tuple[list[Evidence], bool]:
         else:
             continue
         evidence_id = _evidence_id(branch.id, url or "", rate.claim)
-        arithmetic = outcome_model.apply_rate(event, rate, evidence_id, branch.span.unit)
+        arithmetic = outcome_model.apply_rate(event, rate, evidence_id, branch.span)
         if arithmetic is None:
             _step(branch.id, "skipped", f"A figure from {title} could not be verified in its own quoted text; left as an estimate", url)
             continue
@@ -245,8 +257,8 @@ def research_scenario(scenario: Scenario, only: Optional[list[str]] = None) -> N
             known = {k: v for k, v in {**branch.assumption, **branch.params}.items() if k != "salary_source"}
             found = [Lead(bid, e["reference_class"], "event", e["search_query"], event_key=e["key"], label=e["label"])
                      for e in branch.model.get("events", [])
-                     if e.get("reference_class") and e.get("search_query") and e["basis"] == "estimated"][:4]
-            if branches.has_background(branch.span):  # pay, rent, program length only matter to the life-course underneath
+                     if e.get("reference_class") and e.get("search_query") and e["basis"] == "estimated" and not e.get("head")][:4]
+            if branches.is_long(branch.span):  # pay, rent, program length: facts the narrative can stand on
                 questions = llm.plan_research(scenario.situation, option.title, option.details, known) or []
                 found += [Lead(bid, q.question, q.parameter, q.search_query) for q in questions][:3]
             return found
@@ -268,7 +280,8 @@ def research_scenario(scenario: Scenario, only: Optional[list[str]] = None) -> N
                 sourced, changed = _apply_rates(branch, [l for l in mine if l.parameter == "event"])
                 get_store().add_evidence(_apply(branch, [l for l in mine if l.parameter != "event"]) + sourced)
                 branch.research = "done"
-                if (branch.params != before or changed) and branch.status == "open":
+                priced = any(e.get("effects_basis") == "sourced" for e in branch.model.get("events", []))
+                if (branch.params != before or changed or priced) and branch.status == "open":
                     branch.revision += 1
                     branches.resimulate(person, branch)
                 else:

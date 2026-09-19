@@ -410,7 +410,8 @@ def simulate(
             latest.relationship_status, latest.housing, CHILD_WORDS[min(max(int(row[6]), 0), CHILD_CAP)],
         ]
         outlook.append({
-            aspect: {"share": round(float(agree[d]), 4), "words": likelihood_words(float(agree[d])), "value": value}
+            aspect: {"share": round(float(agree[d]), 4), "words": likelihood_words(float(agree[d])), "value": value,
+                     "probability": round(float(agree[d]), 4)}
             for d, (aspect, value) in enumerate(zip(ASPECTS, values))
         })
         if not is_alive:
@@ -443,13 +444,15 @@ def to_life_events(result: SimResult, person_id: str, branch_id: str, revision: 
         for ev in decided + year_events:
             key = f"{person_id}|{branch_id}|r{revision}|{year}|{ev['event_type']}|{ev['payload'].get('commit_id', '')}"
             h = hashlib.sha1(key.encode()).digest()
+            # the date must not move when the branch is simulated again (undo has to restore the same life)
+            d = hashlib.sha1(f"{person_id}|{branch_id}|{year}|{ev['event_type']}".encode()).digest()
             row.append(
                 LifeEvent(
                     id=h.hex()[:16],
                     person_id=person_id,
                     source="simulated",
                     branch_id=branch_id,
-                    date=f"{year}-{h[0] % 12 + 1:02d}-{h[1] % 28 + 1:02d}",
+                    date=f"{year}-{d[0] % 12 + 1:02d}-{d[1] % 28 + 1:02d}",
                     domain=ev["domain"],
                     event_type=ev["event_type"],
                     payload={**ev["payload"], "revision": revision},

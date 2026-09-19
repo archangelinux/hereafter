@@ -22,6 +22,8 @@ LLM_MODEL = os.getenv("HEREAFTER_LLM_MODEL") or {"openai": "gpt-5.5", "anthropic
 # Measured 2026-09-19: gpt-5.5 default effort ~50 s, effort low ~24-37 s with quality intact; gpt-5.4-mini
 # ~8-14 s but it stops sharing outcome keys across options, which breaks compare. So: same model, low effort.
 LLM_FAST_MODEL = os.getenv("HEREAFTER_LLM_FAST_MODEL") or {"openai": "gpt-5.5", "anthropic": "claude-opus-5"}[LLM_PROVIDER]
+# Reading a one-line decision into situation + options must feel instant: the smallest model.
+LLM_TICKET_MODEL = os.getenv("HEREAFTER_LLM_TICKET_MODEL") or {"openai": "gpt-5.4-mini", "anthropic": "claude-haiku-4-5"}[LLM_PROVIDER]
 LLM_FAST_EFFORT = os.getenv("HEREAFTER_LLM_FAST_EFFORT", "low")  # OpenAI reasoning effort for that call; empty = provider default
 
 ES_URL = os.getenv("ELASTICSEARCH_URL", "")
@@ -35,6 +37,8 @@ ES_INFERENCE_ID = os.getenv("HEREAFTER_ES_INFERENCE_ID", ".multilingual-e5-small
 BROWSERBASE_API_KEY = os.getenv("BROWSERBASE_API_KEY", "")
 BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
 
+# The life-table background (friends' weddings and children, parents, money drift) is off unless asked for.
+BACKGROUND = os.getenv("HEREAFTER_BACKGROUND", "off").lower() in ("on", "1", "true", "yes")
 SIM_RUNS = int(os.getenv("HEREAFTER_SIM_RUNS", "1000"))
 SIM_HORIZON_YEARS = int(os.getenv("HEREAFTER_SIM_HORIZON", "40"))
 

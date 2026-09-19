@@ -12,6 +12,7 @@ import '@fontsource-variable/newsreader/opsz.css'
 import '@fontsource-variable/newsreader/opsz-italic.css'
 
 import './styles.css'
+import './hud.css'
 import { applyTheme } from './theme'
 import App from './App'
 

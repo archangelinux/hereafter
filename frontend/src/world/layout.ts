@@ -1,15 +1,24 @@
 // Where everything in the world lies. Pure functions; the scene only draws what this returns.
 //
-// The world IS the branch timeline. Time has one direction across it: main flows in from the past
-// (lower left on screen) to now, and everything undecided carries on the same way (upper right),
-// fanning apart like a river delta. A chosen branch bows out and curves back into main. Roads not
-// taken peel away to the sides and end. A decision made inside another life leaves from that
-// life's ribbon, not from main. Small decisions are short side-streams near now; big ones run far.
+// Main is one strong, flowing band from the past to now. Circles appear on it only where a decision
+// is made, and the two kinds of decision are told apart at a glance by thickness, circle and angle:
 //
-// Every lane is a centreline sampled every DS of arc length from its fork (d = 0). A lane's steps
-// are spread evenly along it, so `s` (0 = the fork, i + 1 = the end of step i) maps to d = s * stepLen.
+//   BIG (a life decision): a large round plaza. Its options leave in entirely different directions,
+//   fanned wide across the forward half of the sky, each a full-width band. When one is chosen, MAIN
+//   ITSELF turns and carries on that way; the others stay where they were, grey, sunk, ending.
+//
+//   SMALL (day to day): a small circle. Its options are thin, short offshoots that leave at a shallow
+//   angle and keep close to main. A chosen one loops back into main a little further on, like a thin
+//   cup handle; the others stay as short grey stubs. Main does not turn. Consecutive small decisions
+//   take alternate sides. Nothing ever crosses.
+//
+// A decision made inside a branch forks from that branch by the same rules.
+// Every lane is a centreline sampled every DS of arc length from its fork (d = 0); its steps are
+// laid along it by their real dates, gently compressed so that dense early weeks do not bunch up
+// (the first month of a three-year path takes about a fifth of it): `dOfS` maps s (0 = the fork,
+// i + 1 = the end of step i) to d.
 
-import { yearOf } from '../format'
+import { dayLabel, yearOf } from '../format'
 import type { Basis, BranchStatus, BranchView, BranchYear, LifeEvent, Scenario } from '../types'
 import { accents } from './palette'
 
@@ -17,12 +26,19 @@ export const DS = 0.25
 const PAST_UNITS = 1.35 // world units per year of past
 const AHEAD = 40
 const DEG = Math.PI / 180
+export const MAIN_WIDTH = 1.15
+const BIG_R = 2.45 // a plaza: between four and five path-widths across
+const SMALL_R = 0.95 // small, but with room on its rim for each option to leave from its own place
+const QUIET_BIG_R = 1.55 // a life decision that is not the one in focus: still plainly the larger kind of circle
+const HANDLE = 3.4 // how far along main a small option's handle reaches
 
 export interface Sample {
   x: number
   y: number
   z: number
 }
+type Point = Sample & { heading: number }
+type Axis = (D: number) => Point
 
 export interface NodeSpec {
   id: string
@@ -36,71 +52,52 @@ export interface NodeSpec {
   event?: LifeEvent
 }
 
-export interface StoneSpec {
-  index: number // order outward from the fork
-  step: number // which step of the branch it belongs to (-1 on main)
-  lead: boolean // the step's own stone; the others only carry the trail between steps
-  d: number
-  x: number
-  y: number
-  z: number
-  heading: number
-  r: number
-  built: number
-}
-
-/** Stepping stones along a centreline: one for each step, with smaller ones between where steps lie far apart. */
-export function stonesAlong(samples: Sample[], from: number, to: number, stepLen: number, builtAt: (d: number) => number, seed: string): StoneSpec[] {
-  const out: StoneSpec[] = []
-  const per = Math.max(1, Math.round(stepLen / 0.72))
-  const steps = Math.ceil((to - 1e-6) / stepLen)
-  for (let step = 0; step < steps; step++) {
-    for (let j = 0; j < per; j++) {
-      const d = (step + (j + 0.5) / per) * stepLen
-      if (d < from || d > to) continue
-      const p = along(samples, d)
-      const r1 = hash01(`${seed}:${step}:${j}`)
-      const r2 = hash01(`${seed}:${step}:${j}:b`)
-      const side = (r1 - 0.5) * 0.3
-      const big = per === 1 ? out.length % 2 === 0 : j === 0
-      out.push({ index: out.length, step, lead: j === 0, d, x: p.x + Math.cos(p.heading) * side, y: p.y, z: p.z + Math.sin(p.heading) * side, heading: p.heading, r: (big ? 0.47 : 0.35) * (0.9 + r2 * 0.22), built: builtAt(d) })
-    }
-  }
-  return out
-}
-
 export interface LaneSpec {
   id: string
   view: BranchView
   status: BranchStatus
+  big: boolean
   accent: string
   width: number
   steps: number
-  stepLen: number
+  stepLen: number // the average; steps are NOT evenly spaced, use stepEnds / dOfS / stepAtD
+  stepEnds: number[] // d at the end of each step
   fullLen: number
-  /** how much of it is drawn once settled: all of an open lane, the loop of a merged one, a stub of a stale one */
+  /** the band is drawn between fromD and drawLen once settled */
+  fromD: number
   drawLen: number
-  /** merged only: how far from the fork it has become main's own stone (the loop, or what has been lived) */
+  /** merged only: how far from the fork it has become main's own stone */
   stoneLen: number
-  breaks: boolean // stale: the end has visibly broken off
+  breaks: boolean // stale: the end has visibly come away
   side: 1 | -1
   small: boolean
-  samples: Sample[]
-  built: Float32Array // per sample, 0..1: how BUILT the ribbon is there
-  /** per sample, 1..0: past where the stone gives out, the drawn ghost of the ribbon soon fades into mist */
-  fade: Float32Array
-  tagD: number // where its name sits: at its far end, as far as it is still visibly there
-  nodes: NodeSpec[]
-  stones: StoneSpec[]
+  atNow: boolean // an option of the decision the figure is standing on: its name is always shown
   example: boolean // a sample path shown to a first-time visitor: drawn the same, a touch paler
+  samples: Sample[]
+  built: Float32Array // per sample, 0..1: how BUILT the band is there
+  fade: Float32Array // per sample, 1..0: past where the stone gives out, its drawn edges soon go to mist
+  tagD: number
+  /** the end of the first step: what a merge would commit (HEAD) */
+  headD: number
+  nodes: NodeSpec[]
   note: string
+}
+
+export interface Plaza {
+  id: string
+  big: boolean
+  at: Point
+  r: number
+  label: string
+  decided: boolean
+  onMain: boolean
+  collapsed: boolean // only its circle is drawn: a quiet mark on main until it is focused
+  branchIds: string[]
 }
 
 export interface MainSpec {
   samples: Sample[] // from the earliest past to now; the last sample is now
-  stones: StoneSpec[]
-  ahead: Sample[] // what has not happened yet, straight on from now
-  nodes: (NodeSpec & { at: Sample & { heading: number } })[]
+  nodes: (NodeSpec & { at: Point })[]
   seeds: { id: string; at: Sample; label: string; caption: string }[]
 }
 
@@ -108,9 +105,8 @@ export interface WorldLayout {
   now: number
   main: MainSpec
   lanes: LaneSpec[]
+  plazas: Plaza[]
   frame: Sample[] // what the overview must keep in view
-  /** half the width of the platform at now, wide enough for every branch that leaves from it */
-  platformHalf: number
 }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
@@ -118,6 +114,7 @@ const ease = (v: number) => {
   const c = clamp01(v)
   return c * c * c * (c * (c * 6 - 15) + 10)
 }
+const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s)
 
 /**
  * How BUILT a stretch is, from how many of the simulated lives agree. The engine's range is about
@@ -146,21 +143,55 @@ export function hash01(s: string): number {
 }
 
 /** Position and heading at arc length d along a sampled centreline. Heading 0 runs toward -z; positive turns toward +x. */
-export function along(samples: Sample[], d: number): Sample & { heading: number } {
+export function along(samples: Sample[], d: number): Point {
   const f = Math.max(0, Math.min(samples.length - 1, d / DS))
-  const i = Math.min(samples.length - 2, Math.floor(f))
+  const i = Math.min(Math.max(0, samples.length - 2), Math.floor(f))
   const k = f - i
-  const a = samples[Math.max(0, i)]
+  const a = samples[i]
   const b = samples[Math.min(samples.length - 1, i + 1)]
   const p = samples[Math.max(0, i - 1)]
   const n = samples[Math.min(samples.length - 1, i + 2)]
   return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, heading: Math.atan2(n.x - p.x, -(n.z - p.z)) }
 }
 
-function fanAngles(n: number): number[] {
-  if (n <= 1) return [-30 * DEG]
-  const spread = n === 2 ? 34 : n === 3 ? 42 : n === 4 ? 54 : 60
-  return Array.from({ length: n }, (_, i) => (-spread + (2 * spread * i) / (n - 1)) * DEG)
+/** s (0 = the fork, i + 1 = the end of step i) → arc length along the lane */
+export function dOfS(lane: Pick<LaneSpec, 'stepEnds'>, s: number): number {
+  const ends = lane.stepEnds
+  const c = Math.max(0, Math.min(ends.length, s))
+  const i = Math.min(ends.length - 1, Math.floor(c))
+  const a = i === 0 ? 0 : ends[i - 1]
+  return a + (ends[i] - a) * (c - i)
+}
+
+/** which step an arc length falls in */
+export function stepAtD(lane: Pick<LaneSpec, 'stepEnds'>, d: number): number {
+  const i = lane.stepEnds.findIndex((e) => d <= e)
+  return i < 0 ? lane.stepEnds.length - 1 : i
+}
+
+const sOfD = (ends: number[], d: number) => {
+  let k = ends.findIndex((e) => d <= e)
+  if (k < 0) k = ends.length - 1
+  const a = k === 0 ? 0 : ends[k - 1]
+  return k + clamp01((d - a) / Math.max(1e-6, ends[k] - a))
+}
+
+const isCollapsed = (s: Scenario) => (s as { collapsed?: boolean }).collapsed === true
+const isHead = (e: LifeEvent) => (e as { head?: boolean }).head === true || e.payload?.head === true
+
+/** A life decision or a day-to-day one. Told by the scenario if it says; otherwise by how far it looks. */
+export function isBig(s: Scenario): boolean {
+  const scale = (s as { scale?: string }).scale
+  if (scale === 'big' || scale === 'small') return scale === 'big'
+  const h = s.horizon
+  return h.unit === 'years' || (h.unit === 'months' && h.count >= 6) || (h.unit === 'weeks' && h.count >= 26)
+}
+
+/** Options of a big decision fan across the whole forward half of the sky. */
+function bigAngles(n: number): number[] {
+  if (n <= 1) return [36 * DEG]
+  const gap = Math.min(62, 180 / (n - 1))
+  return Array.from({ length: n }, (_, i) => (i - (n - 1) / 2) * gap * DEG)
 }
 
 const STATUS_NOTE: Record<string, string> = { open: '', merged: 'merged into main', faded: 'a road not taken', stale: 'stale', expired: 'stale' }
@@ -168,181 +199,218 @@ const STATUS_NOTE: Record<string, string> = { open: '', merged: 'merged into mai
 export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: BranchView[]; scenarios: Scenario[] }): WorldLayout {
   const now = yearOf(opts.now)
   const byId = new Map(opts.views.map((v) => [v.branch.id, v]))
-
-  // ---- main's axis: the past behind now, and the same line carried on ahead of it
-  const wander = (D: number) => 0.3 * Math.sin(D * 0.21 + 1.1) + 0.14 * Math.sin(D * 0.09 + 0.4)
-  const heave = (D: number) => 0.28 * Math.sin(D * 0.27) * clamp01(Math.abs(D) / 4)
+  const scenarios = [...opts.scenarios].sort((a, b) => a.created_at.localeCompare(b.created_at))
+  const viewsOf = (s: Scenario) => s.branch_ids.map((id) => byId.get(id)).filter((v): v is BranchView => !!v && v.years.length > 0)
+  const isOpen = (s: Scenario) => viewsOf(s).some((v) => v.branch.status === 'open')
+  const chosenIndex = (s: Scenario) => viewsOf(s).findIndex((v) => v.branch.status === 'merged')
+  const fromMain = scenarios.filter((s) => !s.assuming_branch_id && viewsOf(s).length > 0)
   const mainEvents = opts.events.filter((e) => e.branch_id === 'main')
+
+  // ---- the junction at now: the newest open life decision, if there is one
+  // An OPEN decision is, by definition, at now. The one in focus (not collapsed; a life decision first,
+  // else the newest) IS the now platform: the figure stands on its circle and its paths leave forward
+  // from under the figure. Other open decisions sit as circles immediately behind now, newest nearest.
+  // Only DECIDED ones sit back in the past, at the date they were decided.
+  const openFocus = [...fromMain].reverse().filter((s) => isOpen(s) && !isCollapsed(s))
+  const primary = openFocus.find(isBig) ?? openFocus[0] ?? null
+
+  // ---- where each decision sits on main: at its real date, but with room for what it needs, newest nearest now
+  const decidedAt = (s: Scenario) => {
+    const chosen = viewsOf(s).find((v) => v.branch.status === 'merged')
+    const decision = chosen && opts.events.find((e) => e.event_type === 'decision' && e.payload?.from_branch === chosen.branch.id)
+    return decision ? yearOf(decision.date) : Math.min(...viewsOf(s).map((v) => yearOf(v.branch.forked_at)))
+  }
+  const realD = (s: Scenario) => (isOpen(s) ? 0 : Math.min(0, (decidedAt(s) - now) * PAST_UNITS))
+  const siteOf = new Map<string, number>()
+  let cursor = primary ? -((isBig(primary) ? BIG_R : SMALL_R) + 0.7) : -0.9
+  if (primary) siteOf.set(primary.id, 0)
+  for (const s of [...fromMain].filter((x) => x !== primary).sort((a, b) => (isOpen(a) !== isOpen(b) ? (isOpen(a) ? -1 : 1) : isOpen(a) ? b.created_at.localeCompare(a.created_at) : realD(b) - realD(a)))) {
+    // the open decision in focus sits nearest now, where there is room for its paths
+    const big = isBig(s)
+    const quiet = isCollapsed(s)
+    const reach = quiet ? (big ? QUIET_BIG_R : SMALL_R) + 0.5 : big ? BIG_R + 1.2 : HANDLE + 0.3 // how much of main ahead of its centre it occupies
+    const D = Math.min(realD(s), cursor - reach)
+    siteOf.set(s.id, D)
+    cursor = D - (quiet ? (big ? QUIET_BIG_R : SMALL_R) + 0.6 : big ? BIG_R + 1.4 : SMALL_R + 0.5)
+  }
+
+  // ---- main's axis. It wanders in long S-curves, and at every life decision that was made it TURNS the way that was chosen.
+  const turns = fromMain
+    .filter((s) => isBig(s) && chosenIndex(s) >= 0)
+    .map((s) => ({ D: siteOf.get(s.id) ?? 0, angle: bigAngles(viewsOf(s).length)[chosenIndex(s)] }))
+  const wander = (D: number) => 0.34 * Math.sin(D * 0.16 + 0.9) + 0.12 * Math.sin(D * 0.07 + 2.0)
+  const turned = (D: number) => turns.reduce((sum, t) => sum + t.angle * ease((D - t.D + 1.1) / 2.2), 0)
+  const headingAt = (D: number) => wander(D) + turned(D) - (wander(0) + turned(0))
+  const heave = (_D: number) => 0 // main is level: every circle on it meets it flush
   const firstEvent = mainEvents.length ? Math.min(...mainEvents.map((e) => yearOf(e.date))) : now - 4
-  const nBack = Math.ceil(((now - (Math.min(firstEvent, now - 3) - 0.6)) * PAST_UNITS) / DS)
+  const nBack = Math.ceil(Math.max((now - (Math.min(firstEvent, now - 3) - 0.6)) * PAST_UNITS, -cursor + 3) / DS)
   const pastLen = nBack * DS
   const back: Sample[] = [{ x: 0, y: 0, z: 0 }]
   for (let i = 1; i <= nBack; i++) {
-    const D = -(i - 0.5) * DS
-    const h = (wander(D) - wander(0)) * (0.3 + 0.7 * ease(-D / 9)) // the last stretch into now is one clear sweep
+    const h = headingAt(-(i - 0.5) * DS)
     const p = back[i - 1]
     back.push({ x: p.x - Math.sin(h) * DS, y: heave(-i * DS), z: p.z + Math.cos(h) * DS })
   }
   const ahead: Sample[] = [{ x: 0, y: 0, z: 0 }]
   for (let i = 1; i <= AHEAD / DS; i++) {
-    const D = (i - 0.5) * DS
-    const h = (wander(D) - wander(0)) * (0.3 + 0.7 * ease(D / 9))
+    const h = headingAt((i - 0.5) * DS)
     const p = ahead[i - 1]
     ahead.push({ x: p.x + Math.sin(h) * DS, y: heave(i * DS), z: p.z - Math.cos(h) * DS })
   }
   const mainSamples = [...back].reverse()
-  /** a point on main's axis at signed arc length D from now (negative is the past) */
-  const axisAt = (D: number) => (D <= 0 ? along(mainSamples, pastLen + Math.max(-pastLen, D)) : along(ahead, Math.min(AHEAD, D)))
-  const axisD = (t: number) => Math.max(-pastLen, Math.min(0, (t - now) * PAST_UNITS))
-
-  // ---- which scenario owns the way straight ahead: the open one that reaches furthest
-  const spanOf = (view: BranchView) => Math.max(1 / 365, yearOf(view.years[view.years.length - 1]?.at ?? view.branch.forked_at) - Math.min(now, yearOf(view.branch.forked_at)))
-  const scenarioSpan = (s: Scenario) => Math.max(0, ...s.branch_ids.map((id) => (byId.has(id) ? spanOf(byId.get(id)!) : 0)))
-  const scenarios = [...opts.scenarios].sort((a, b) => a.created_at.localeCompare(b.created_at))
-  const fromMainOpen = scenarios.filter((s) => !s.assuming_branch_id && s.branch_ids.some((id) => byId.get(id)?.branch.status === 'open'))
-  const primary = [...fromMainOpen].sort((a, b) => scenarioSpan(b) - scenarioSpan(a))[0] ?? null
-  const lastDecided = [...scenarios].reverse().find((s) => !s.assuming_branch_id && s.branch_ids.some((id) => byId.get(id)?.branch.status === 'merged')) ?? null
-
-  // ---- where each decision leaves main: at its real date, but never crowding another fork
-  const SITE_GAP = 2.8
-  const JOIN_LEN = 5.6 // a chosen branch flows back into main over this much of it
-  const siteOf = new Map<string, number>()
-  {
-    const fromMain = scenarios.filter((sc) => !sc.assuming_branch_id)
-    const isOpen = (sc: Scenario) => fromMainOpen.includes(sc)
-    const real = (sc: Scenario) => (sc === primary ? 0 : isOpen(sc) ? -0.01 : axisD(Math.min(...sc.branch_ids.map((id) => (byId.has(id) ? yearOf(byId.get(id)!.branch.forked_at) : now)))))
-    let lastD = Infinity
-    for (const sc of [...fromMain].sort((a, b) => real(b) - real(a))) {
-      if (sc === primary) {
-        siteOf.set(sc.id, 0)
-        lastD = 0
-        continue
-      }
-      // an open side-stream needs a fork's width of main to itself; a decided one needs room for its rejoining too
-      const room = isOpen(sc) ? SITE_GAP : JOIN_LEN + 2
-      const D = Math.max(-pastLen + 1, Math.min(real(sc), (lastD === Infinity ? 0 : lastD) - room))
-      siteOf.set(sc.id, D)
-      lastD = D
-    }
+  const mainAxis: Axis = (D) => {
+    const p = D <= 0 ? along(mainSamples, pastLen + Math.max(-pastLen, D)) : along(ahead, Math.min(AHEAD, D))
+    return { ...p, heading: headingAt(Math.max(-pastLen, Math.min(AHEAD, D))) }
   }
+  const timeD = (t: number) => Math.max(-pastLen, Math.min(0, (t - now) * PAST_UNITS))
 
   const lanes: LaneSpec[] = []
-  let sideStream = 0
+  const plazas: Plaza[] = []
 
   // parents before the decisions made inside them
   const ordered: Scenario[] = []
-  const pending = [...scenarios]
+  const pending = scenarios.filter((s) => viewsOf(s).length > 0)
   while (pending.length) {
-    const i = pending.findIndex((s) => !s.assuming_branch_id || ordered.some((o) => o.branch_ids.includes(s.assuming_branch_id!)) || !byId.has(s.assuming_branch_id))
+    const i = pending.findIndex((s) => !s.assuming_branch_id || lanesWillExist(ordered, s.assuming_branch_id) || !byId.has(s.assuming_branch_id))
     ordered.push(...pending.splice(i < 0 ? 0 : i, 1))
   }
 
+  let smallSide: 1 | -1 = 1
+  const childCount = new Map<string, number>()
+
   for (const scenario of ordered) {
-    const views = scenario.branch_ids.map((id) => byId.get(id)).filter((v): v is BranchView => !!v && v.years.length > 0)
-    if (!views.length) continue
+    const views = viewsOf(scenario)
+    const big = isBig(scenario)
     const parent = scenario.assuming_branch_id ? (lanes.find((l) => l.id === scenario.assuming_branch_id) ?? null) : null
-    const anyOpen = views.some((v) => v.branch.status === 'open')
-    const isPrimary = scenario === primary
-    const stemSide: 1 | -1 = sideStream % 2 === 0 ? 1 : -1
-    const isSideStream = !parent && anyOpen && !isPrimary
-    if (isSideStream) sideStream++
-    const openFan = fanAngles(views.length)
-    let closedCount = 0
+    if (scenario.assuming_branch_id && !parent) continue // made inside a life that is not drawn just now
+    const collapsed = isCollapsed(scenario)
+    const example = (scenario as { example?: boolean }).example === true
+
+    // the axis this decision sits on: main, or the branch it is made inside
+    let axis: Axis
+    let site: number
+    if (parent) {
+      const k = childCount.get(parent.id) ?? 0
+      childCount.set(parent.id, k + 1)
+      axis = (D) => along(parent.samples, Math.max(0, D))
+      site = Math.min(parent.fullLen * 0.7, (big ? 8 : 5.5) + k * (HANDLE + 1.6))
+    } else {
+      axis = mainAxis
+      site = siteOf.get(scenario.id) ?? 0
+    }
+    const arriving = axis(site - (big && !parent ? 1.2 : 0))
+    const centre = { ...axis(site), heading: arriving.heading }
+    const scale = parent ? Math.min(1, parent.width / MAIN_WIDTH + 0.1) : 1
+    const side: 1 | -1 = big ? 1 : smallSide
+    if (!big) smallSide = smallSide === 1 ? -1 : 1
+    plazas.push({ id: scenario.id, big, at: centre, r: (collapsed && big ? QUIET_BIG_R : big ? BIG_R : SMALL_R) * scale, label: clip(scenario.situation, 38), decided: !isOpen(scenario), onMain: !parent, collapsed, branchIds: views.map((v) => v.branch.id) })
+    if (collapsed) continue
+
+    const chosen = chosenIndex(scenario)
+    const angles = parent && big ? views.map((_, i) => (parent.side || 1) * (48 + 46 * i) * DEG) : bigAngles(views.length)
+    let rank = 0 // small options: the chosen handle sits nearest main, the rest stack outward
 
     views.forEach((view, i) => {
       const status = view.branch.status
       const closed = status === 'faded' || status === 'stale' || status === 'expired'
       const merged = status === 'merged'
       const steps = view.years.length
-      const span = spanOf(view)
-      const fullLen = Math.round(Math.max(5, Math.min(34, 5 + 29 * Math.sqrt(span / 40))) / DS) * DS
+      const span = Math.max(1 / 365, yearOf(view.years[steps - 1].at) - Math.min(now, yearOf(view.branch.forked_at)))
+      const fullLen = Math.round((big ? Math.max(12, Math.min(26, 10 + 22 * Math.sqrt(span / 40))) * (parent ? 0.75 : 1) : HANDLE + 1) / DS) * DS
       const stepLen = fullLen / steps
-      const small = span < 1.5
-      const width = parent ? 0.62 : small ? 0.5 : 0.62 + 0.36 * clamp01(span / 25)
+      // each step ends where its date falls, with time eased so the dense early weeks get room: the first
+      // month of a three-year path takes about a fifth of it. Never less than a sliver per step.
+      const t0 = Math.min(yearOf(view.branch.forked_at), yearOf(view.years[0].at))
+      const tEnd = Math.max(t0 + 1 / 365, yearOf(view.years[steps - 1].at))
+      const stepEnds: number[] = []
+      view.years.forEach((y, k) => {
+        const u = clamp01((yearOf(y.at) - t0) / (tEnd - t0))
+        const d = fullLen * Math.pow(u, 0.45)
+        stepEnds.push(Math.min(fullLen, Math.max(d, (stepEnds[k - 1] ?? 0) + Math.min(0.35, stepLen * 0.5))))
+      })
+      stepEnds[steps - 1] = fullLen
+      // the first step is the choice itself: a clear stretch straight off the decision's circle
+      const headD = big ? (parent ? 0 : BIG_R * scale) + 1.9 : 1.15
+      if (steps > 1 && stepEnds[0] < headD) {
+        const push = headD - stepEnds[0]
+        for (let k = 0; k < steps - 1; k++) stepEnds[k] = Math.min(fullLen - (steps - 1 - k) * 0.2, stepEnds[k] + push * (1 - k / (steps - 1)))
+      }
       const count = Math.round(fullLen / DS)
+      const width = (big ? 1.0 : 0.4) * scale
       const phase = hash01(view.branch.id) * Math.PI * 2
       const samples: Sample[] = []
-      let side: 1 | -1 = 1
+      let laneSide: 1 | -1 = side
+      let fromD = -1
       let drawLen = fullLen
       let stoneLen = 0
 
-      if (merged) {
-        // The chosen branch flows back into main BEHIND now: two ribbons becoming one, a clean wide Y.
-        // It comes in from the side its siblings did not take, meets main at a shallow angle, and from
-        // there on it IS main.
-        const site = siteOf.get(scenario.id) ?? axisD(yearOf(view.branch.forked_at))
-        const joinD = Math.min(-1.6, site + JOIN_LEN)
-        side = 1
+      if (big && merged && !parent) {
+        // the chosen way IS main from the plaza on: main turned here
+        for (let k = 0; k <= count; k++) samples.push(mainAxis(site + k * DS))
+        // A merge commits ONE step: main turns onto the chosen way and advances along it, and that is all
+        // that becomes main's stone. Main's own band already covers what has been lived since. Everything
+        // beyond stays a projected path, drawn by likelihood like any open one, and still walkable.
+        const lived = Math.max(0, -site)
+        fromD = lived - 0.2
+        drawLen = primary ? lived : fullLen // unless a new junction already stands at now, where the way ahead divides again
+        stoneLen = lived + 0.3
+        laneSide = angles[i] >= 0 ? 1 : -1
+      } else if (big) {
+        // a full-width band leaving the plaza for its own part of the sky, in long graceful curves
+        const a = angles[i]
+        laneSide = a >= 0 ? 1 : -1
+        let x = centre.x
+        let z = centre.z
         for (let k = 0; k <= count; k++) {
           const d = k * DS
-          const a = axisAt(joinD - JOIN_LEN + d)
-          const off = 4.2 * Math.pow(1 - clamp01(d / JOIN_LEN), 1.7) // in from well aside, meeting main at a shallow angle
-          samples.push({ x: a.x + Math.cos(a.heading) * off, y: a.y + off * 0.2, z: a.z + Math.sin(a.heading) * off })
-        }
-        const continues = scenario === lastDecided && fromMainOpen.length === 0
-        drawLen = continues ? fullLen : Math.min(fullLen, JOIN_LEN + 0.4)
-        stoneLen = continues ? Math.max(JOIN_LEN, -(joinD - JOIN_LEN) + 0.4) : drawLen + 1
-      } else {
-        // where it leaves from, and which way that was already heading
-        let start: Sample & { heading: number }
-        let stem = 0
-        let stemLen = 0
-        let fan = openFan[i]
-        const hasChosen = views.some((v) => v.branch.status === 'merged')
-        if (parent) {
-          start = along(parent.samples, Math.min(parent.fullLen * 0.5, Math.max(parent.stepLen * 0.9, 4.5)) + i * 0.9)
-          fan = parent.side * (16 + 12 * i) * DEG
-        } else if (isSideStream) {
-          // a small decision: short side-streams, each leaving main from its own point
-          start = axisAt((siteOf.get(scenario.id) ?? 0) - i * 0.95)
-          stem = stemSide * 84 * DEG
-          stemLen = 0.6
-          fan = stemSide * (views.length > 1 ? 16 - (34 * i) / (views.length - 1) : 0) * DEG
-        } else if (closed) {
-          start = axisAt((siteOf.get(scenario.id) ?? 0) - closedCount * 1.3)
-        } else {
-          // the way ahead divides at the edge of the now platform: each branch from its own place on it
-          const a = axisAt(0)
-          const off = 0 * i // every way ahead leaves from the stone the figure stands on
-          start = { ...a, x: a.x + Math.cos(a.heading) * off, z: a.z + Math.sin(a.heading) * off }
-        }
-        if (closed) {
-          // roads not taken peel away early and well aside: all to the far side from the chosen one, or alternating
-          const s: 1 | -1 = hasChosen ? -1 : closedCount % 2 === 0 ? -1 : 1
-          const n = hasChosen ? closedCount : Math.floor(closedCount / 2)
-          closedCount++
-          stem = 0
-          fan = s * (78 + 24 * n) * DEG
-        }
-        const total = stem + fan
-        side = total >= 0 ? 1 : -1
-        const lean = closed ? -1.4 : Math.abs(total) < 0.05 ? 0.2 : -Math.sign(total) * 0.8
-        let x = start.x
-        let z = start.z
-        for (let k = 0; k <= count; k++) {
-          const d = k * DS
-          samples.push({ x, y: start.y + lean * 1.0 * (1 - Math.exp(-d / (closed ? 3 : 9))) + 0.16 * Math.sin(d * 0.3 + phase) * ease(d / 5), z })
+          samples.push({ x, y: centre.y + (-Math.sign(a) * 0.9 * (1 - Math.exp(-d / 9)) + 0.22 * Math.sin(d * 0.19 + phase)) * ease((d - BIG_R) / 5), z })
           const dm = d + DS / 2
-          const h = start.heading + stem * ease(dm / 1.6) + fan * ease((dm - stemLen) / (small ? 2.0 : 3.2)) + 0.15 * Math.sin(dm * 0.33 + phase) * ease(dm / 7)
+          const h = centre.heading + a + 0.24 * Math.sin(dm * 0.2 + phase) * ease((dm - BIG_R) / 7) // straight out through its own place on the rim, then long curves
           x += Math.sin(h) * DS
           z -= Math.cos(h) * DS
         }
-        if (status === 'stale' || status === 'expired') drawLen = Math.min(fullLen, 3.6)
-        else if (status === 'faded') drawLen = Math.min(fullLen, 10)
+        if (merged) stoneLen = stepEnds[0] // chosen inside another life: only its first step is committed; the rest stays projected
+        if (status === 'stale' || status === 'expired') drawLen = Math.min(fullLen, 3.4)
+        else if (status === 'faded') drawLen = Math.min(fullLen, 8)
+      } else {
+        // a thin offshoot that keeps close to the band it left; chosen, it comes back in like a cup handle
+        const order = merged ? 0 : ++rank - (chosen >= 0 ? 0 : 1)
+        const amp = (0.9 + 0.7 * order) * scale + (chosen >= 0 && !merged ? 0.35 : 0)
+        // each option has its own exit point on the rim of the circle, further round for each one out
+        const R = SMALL_R * scale * 0.8
+        const phi = (28 + 44 * order) * DEG // far enough round the rim from its neighbour that there is daylight between them
+        const rimOff = R * Math.sin(phi)
+        const rimAlong = R * Math.cos(phi)
+        for (let k = 0; k <= count; k++) {
+          const d = k * DS
+          const a = axis(site + rimAlong + d)
+          const reach = merged
+            ? rimOff * (1 - clamp01(d / HANDLE)) + (amp - rimOff * 0.5) * Math.pow(Math.sin(Math.PI * clamp01(d / HANDLE)), 0.8)
+            : rimOff + (amp * (1 + 0.12 * d) - rimOff) * Math.pow(Math.sin((Math.PI / 2) * clamp01(d / 2.2)), 0.9)
+          const off = side * reach
+          samples.push({ x: a.x + Math.cos(a.heading) * off, y: a.y + Math.abs(off) * 0.05 * ease((d - 0.3) / 1.5), z: a.z + Math.sin(a.heading) * off })
+        }
+        if (merged) {
+          drawLen = HANDLE
+          stoneLen = HANDLE + 1
+        } else if (status === 'stale' || status === 'expired') drawLen = 1.5
+        else if (status === 'faded') drawLen = 2.3
       }
 
       // how built it is along its length, from each step's agreement
       const built = new Float32Array(count + 1)
       for (let k = 0; k <= count; k++) {
-        const f = (k * DS) / stepLen - 0.5
+        const f = sOfD(stepEnds, k * DS) - 0.5
         const a = Math.max(0, Math.min(steps - 1, Math.floor(f)))
         const b = Math.min(steps - 1, a + 1)
         const t = clamp01(f - a)
-        const here = f < 0 ? 1 + (builtFrom(view.years[0].solidity) - 1) * clamp01(f + 0.5) * 2 : builtFrom(view.years[a].solidity) * (1 - t) + builtFrom(view.years[b].solidity) * t
+        let here = f < 0 ? 1 + (builtFrom(view.years[0].solidity) - 1) * clamp01(f + 0.5) * 2 : builtFrom(view.years[a].solidity) * (1 - t) + builtFrom(view.years[b].solidity) * t
+        if (!big && status === 'open') here = Math.max(here, 0.74) * (1 - ease(((k * DS) / fullLen - 0.8) / 0.2)) // a small option is one clean thin band, tapering only at its very end
+        // A path you could still take is never invisible: its first step (the choice itself) is plain stone, and the
+        // rest is at least a thin pale band for the first half of its way, however unsure. Likelihood still shows above that.
+        if (status === 'open') here = Math.max(here, k * DS <= stepEnds[0] ? 0.78 : 0.4 * (1 - ease(((k * DS) / fullLen - 0.5) / 0.45)))
         built[k] = closed ? Math.max(here, 0.78) : here
       }
-
-      // once the stone has given out, its drawn ghost carries on a little way and is gone
       let giveOut = fullLen
       for (let k = Math.round(1.5 / DS); k <= count; k++)
         if (built[k] < 0.32) {
@@ -351,96 +419,117 @@ export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: Bra
         }
       const fade = new Float32Array(count + 1)
       for (let k = 0; k <= count; k++) {
-        const t = clamp01((k * DS - giveOut) / 6)
+        const t = clamp01((k * DS - giveOut) / (big ? 9 : 1.5))
         fade[k] = status === 'open' ? 1 - t * t * (3 - 2 * t) : 1
       }
-      const tagD = merged ? Math.min(drawLen, stoneLen) / 2 : Math.max(1.4, Math.min(drawLen - 0.2, giveOut + 2.5, small ? 99 : 12.5))
+      const tagStagger = scenario === primary ? i * (big ? 1.1 : 0.45) : 0
+      const tagD0 = big ? Math.max(1.2, Math.min(drawLen - 0.1, giveOut + 2, 12.5)) : Math.min(drawLen, fullLen * 0.86)
+
+      const tagD = Math.min(fullLen - 0.2, tagD0 + tagStagger)
 
       const nodes: NodeSpec[] = []
       view.years.forEach((step, index) => {
         step.events.forEach((e, n) => {
-          const d = (index + 0.35 + (0.5 * (n + 1)) / (step.events.length + 1)) * stepLen
-          if (d <= drawLen - 0.2) nodes.push({ id: e.id, kind: 'event', step: index, d, label: e.text, caption: step.label, basis: basisOf(e), domain: e.domain, event: e })
+          const from = index === 0 ? 0 : stepEnds[index - 1]
+          // the choice itself (head) stands at the end of the first step: what a merge commits
+          const d = isHead(e) ? stepEnds[0] : from + (0.35 + (0.5 * (n + 1)) / (step.events.length + 1)) * (stepEnds[index] - from)
+          if ((d <= drawLen - 0.15 && d >= fromD) || isHead(e)) nodes.push({ id: e.id, kind: 'event', step: index, d, label: e.text, caption: step.label, basis: basisOf(e), domain: e.domain, event: e })
         })
       })
       for (const c of view.branch.commits ?? []) {
         const index = Math.max(0, view.years.findIndex((y) => y.at >= c.at || y.year >= c.year))
-        const d = (index + 0.12) * stepLen
-        if (d <= drawLen) nodes.push({ id: c.id, kind: 'commit', step: index, d, label: c.message, caption: view.years[index].label, basis: 'background', domain: 'commit' })
+        const d = (index === 0 ? 0 : stepEnds[index - 1]) + 0.12 * (stepEnds[index] - (index === 0 ? 0 : stepEnds[index - 1]))
+        if (d <= drawLen && d >= fromD) nodes.push({ id: c.id, kind: 'commit', step: index, d, label: c.message, caption: view.years[index].label, basis: 'background', domain: 'commit' })
       }
-
-      const stones = stonesAlong(samples, 0.62, fullLen, stepLen, (d) => built[Math.min(count, Math.round(d / DS))], view.branch.id)
 
       const deadline = view.branch.precondition?.match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? null
       lanes.push({
         id: view.branch.id,
         view,
         status,
+        big,
         accent: accents[i % accents.length],
         width,
         steps,
         stepLen,
+        stepEnds,
         fullLen,
+        fromD,
         drawLen,
         stoneLen,
         breaks: status === 'stale' || status === 'expired',
-        side,
-        small,
+        side: laneSide,
+        small: !big,
+        atNow: scenario === primary,
+        example,
         samples,
         built,
         fade,
         tagD,
+        headD: stepEnds[0],
         nodes,
-        stones,
-        example: (scenario as { example?: boolean }).example === true,
-        note: status === 'open' && deadline ? `open until ${deadline}` : (STATUS_NOTE[status] ?? ''),
+        note: status === 'open' && deadline ? `open until ${dayLabel(deadline)}` : (STATUS_NOTE[status] ?? ''),
       })
     })
   }
 
   // ---- main's own log, and what has been picked to keep
-  const nodes = mainEvents
-    .filter((e) => e.event_type !== 'goal' && yearOf(e.date) <= now + 0.01)
-    .map((e) => ({ id: e.id, kind: 'event' as const, step: 0, d: 0, label: e.text, caption: e.date, basis: (e.source === 'told' ? 'personal' : 'sourced') as Basis | 'personal', domain: e.domain, event: e, at: axisAt(axisD(yearOf(e.date))) }))
+  // Main's marks. Things that share a date are ONE mark (they must never stretch main), and what has no real
+  // date (facts about the person, breadcrumbs, glimpses, notes) is not a moment on main at all.
+  const UNDATED = /^(state_fact|breadcrumb|profile_glimpse|note|goal)$/
+  const byDay = new Map<string, LifeEvent[]>()
+  for (const e of mainEvents) {
+    if (UNDATED.test(e.event_type) || e.payload?.undated === true || yearOf(e.date) > now + 0.01) continue
+    const day = e.date.slice(0, 10)
+    byDay.set(day, [...(byDay.get(day) ?? []), e])
+  }
+  const nodes = [...byDay.entries()].map(([day, es]) => ({
+    id: es[0].id,
+    kind: 'event' as const,
+    step: 0,
+    d: 0,
+    label: es.length === 1 ? es[0].text : `${es[0].text} · and ${es.length === 2 ? 'one more thing' : 'more'} that day`,
+    caption: dayLabel(day),
+    basis: (es[0].source === 'told' ? 'personal' : 'sourced') as Basis | 'personal',
+    domain: es[0].domain,
+    event: es[0],
+    at: mainAxis(timeD(yearOf(day))),
+  }))
   const seeds = mainEvents
     .filter((e) => e.event_type === 'goal')
     .map((e, i) => {
       const target = typeof e.payload?.target_date === 'string' ? yearOf(e.payload.target_date) : now + 2
-      const a = axisAt(Math.max(4.6, Math.min(9, (target - now) * 0.9)) + i * 1.6)
-      return { id: e.id, label: e.text, caption: typeof e.payload?.target_date === 'string' ? `picked · toward ${String(e.payload.target_date).slice(0, 4)}` : 'picked', at: { x: a.x - Math.cos(a.heading) * 2.1, y: a.y + 0.3, z: a.z - Math.sin(a.heading) * 2.1 } }
+      const a = mainAxis(Math.max(primary ? BIG_R + 1.6 : 2.2, Math.min(8, (target - now) * 0.9)) + i * 1.5)
+      return { id: e.id, label: e.text, caption: typeof e.payload?.target_date === 'string' ? `picked · toward ${String(e.payload.target_date).slice(0, 4)}` : 'picked', at: { x: a.x, y: a.y + 0.1, z: a.z } }
     })
 
-  // the overview keeps in sight: some past, now, what was picked, and every lane as far as it is visibly there
-  const frame: Sample[] = [axisAt(-Math.min(pastLen, 10)), axisAt(0), ...seeds.map((s) => s.at)]
+  // the overview keeps in sight: main's recent past, now, every junction near it, and every open way as far as it is visibly there
+  // … composed around the one decision in focus: enough of main to reach it, now, and its paths
+  const focusBack = Math.max(0, ...plazas.filter((p) => p.onMain && !p.collapsed).map((p) => Math.hypot(p.at.x, p.at.z)))
+  const backLen = Math.min(pastLen, plazas.some((p) => p.collapsed) ? Math.max(6, focusBack + 2.5) : Math.max(9, -cursor))
+  const frame: Sample[] = [mainAxis(-backLen), mainAxis(0), mainAxis(2), ...seeds.map((s) => s.at)]
+  for (const p of plazas) if (p.onMain && (!p.collapsed || Math.hypot(p.at.x, p.at.z) < backLen)) frame.push(p.at)
   for (const l of lanes) {
-    const reach = l.status === 'open' ? Math.min(l.tagD + 1, 13.5) : Math.min(l.drawLen, 8)
-    for (let d = 0; d <= reach; d += 1.5) frame.push(along(l.samples, d))
+    const reach = l.status === 'open' ? Math.min(l.tagD + 1, 13.5) : Math.min(l.drawLen, 7)
+    for (let d = Math.max(0, l.fromD); d <= reach; d += 1.5) frame.push(along(l.samples, d))
   }
 
-  const onPlatform = primary ? primary.branch_ids.filter((id) => byId.get(id)?.branch.status === 'open').length : 0
-  const widest = Math.max(0.7, ...lanes.filter((l) => primary?.branch_ids.includes(l.id)).map((l) => l.width))
-  const platformHalf = Math.max(1.05, ((Math.max(1, primary ? primary.branch_ids.length : 1) - 1) / 2) * (widest + 0.55) + widest / 2 + 0.3) * (onPlatform ? 1 : 0.8)
-
-  const mainStones = stonesAlong(mainSamples, 0.3, pastLen - 0.5, 0.68, () => 1, 'main').map((st) => ({ ...st, step: -1 }))
-
-  return { now, main: { samples: mainSamples, stones: mainStones, ahead, nodes, seeds }, lanes, frame, platformHalf }
+  return { now, main: { samples: mainSamples, nodes, seeds }, lanes, plazas, frame }
 }
 
-/** The rarest life on a branch: the faintest thread, peeling off beside it. */
-export function layoutRare(lane: LaneSpec, years: BranchYear[]): { samples: Sample[]; nodes: NodeSpec[]; len: number } {
-  const len = Math.min(years.length * lane.stepLen, lane.drawLen)
+function lanesWillExist(ordered: Scenario[], branchId: string) {
+  return ordered.some((o) => o.branch_ids.includes(branchId))
+}
+
+/** The rarest life on a branch: a hair-thin dotted strand, peeling off beside it. */
+export function layoutRare(lane: LaneSpec, years: BranchYear[]): { samples: Sample[]; len: number } {
+  const len = Math.min(dOfS(lane, years.length), lane.status === 'open' ? lane.fullLen : lane.drawLen)
   const samples: Sample[] = []
+  const reach = lane.big ? 1.5 : 0.55
   for (let d = 0; d <= len + 1e-6; d += DS) {
     const p = along(lane.samples, d)
-    const off = lane.side * (1.35 * ease((d - 0.3) / 3.2) + 0.2 * Math.sin(d * 0.8) * ease(d / 4))
+    const off = lane.side * (reach * ease((d - 0.3) / 3.2) + 0.18 * Math.sin(d * 0.8) * ease(d / 4))
     samples.push({ x: p.x + Math.cos(p.heading) * off, y: p.y + 0.12 * ease(d / 3), z: p.z + Math.sin(p.heading) * off })
   }
-  const nodes: NodeSpec[] = []
-  years.forEach((step, index) =>
-    step.events.forEach((e, n) => {
-      const d = (index + 0.35 + (0.5 * (n + 1)) / (step.events.length + 1)) * lane.stepLen
-      if (d <= len) nodes.push({ id: e.id, kind: 'event', step: index, d, label: e.text, caption: step.label, basis: basisOf(e), domain: e.domain, event: e })
-    }),
-  )
-  return { samples, nodes, len }
+  return { samples, len }
 }

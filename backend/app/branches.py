@@ -18,9 +18,9 @@ from typing import Optional
 
 from . import config, db, evidence, llm
 from .models import Branch, BranchView, BranchYear, Commit, Horizon, LifeEvent, Option, Person, StateVector
-from .outcome_model import model_patch, public_model
+from .outcome_model import choice_label, ensure_head, model_patch, normalize, public_model, resolve_terms
 from .sim.engine import BAND_ELSEWHERE, BAND_IN_CANADA, CITY_PROVINCE, USD_TO_CAD, simulate, to_life_events
-from .sim.outcomes import simulate_outcomes, step_dates, step_labels
+from .sim.outcomes import BIG_DEFAULT_YEARS, MAX_STEPS, window_from_days, describe, measures, simulate_outcomes, step_dates, step_labels, step_offsets
 from .sim.tables import load_tables
 from .store import get_store
 
@@ -102,9 +102,15 @@ def assumption_from_option(situation: str, option: Option) -> tuple[dict, dict]:
     return raw, params
 
 
-def has_background(span: Horizon) -> bool:
-    """The life-course runs underneath only when a year or more is in play."""
+def is_long(span: Horizon) -> bool:
+    """A year or more is in play: worth researching pay, rent and program facts for the narrative."""
     return span.unit == "years" or (span.unit == "months" and span.count >= 12)
+
+
+def has_background(span: Horizon) -> bool:
+    """The life-table background runs underneath long horizons only, and only when switched on
+    (HEREAFTER_BACKGROUND=on). It is off by default: people found it noise."""
+    return config.BACKGROUND and is_long(span)
 
 
 def _steps(branch: Branch) -> tuple[list[date], list[str]]:
@@ -134,14 +140,34 @@ def _life(person: Person, branch: Branch, which: str, run: int, outcome, backgro
     by_key = {e["key"]: e for e in branch.model.get("events", [])}
     fork = StateVector(**branch.fork)
     bg_events = to_life_events(background, person.id, branch.id, branch.revision) if background else []
-    monthly = branch.span.unit == "months"  # twelve steps share one background year; its events land on their own month
+    start = dates[0]
+    rank = {k: i for i, k in enumerate(_story_order(branch.model.get("events", [])))}
     fired = outcome.life(run)
+    horizon_ends = start + timedelta(days=step_offsets(branch.span.unit, branch.span.count, start)[-1])
+    happened_on: dict[str, date] = {}
+
+    def dated(e: dict, s: int) -> date:
+        """The day this moment falls on: inside its step AND inside its own window of days, fixed by a
+        hash so it never moves, and never before whatever it follows."""
+        lo = max(dates[s], start + timedelta(days=(e.get("days") or [0, 0])[0])) if e.get("days") else dates[s]
+        hi = min((dates[s + 1] if s + 1 < len(dates) else horizon_ends) - timedelta(days=1),
+                 start + timedelta(days=e["days"][1]) if e.get("days") else date.max)
+        lo = min(lo, max(hi, dates[s]))
+        spread = max(0, (hi - lo).days)
+        pick = int(sha1(f"{branch.id}|{e['key']}|{s}".encode()).hexdigest()[:8], 16) % (spread + 1)
+        day = lo + timedelta(days=pick)
+        for k in [*(e.get("requires") or []), *(e.get("after") or [])]:
+            if k in happened_on:
+                day = max(day, happened_on[k])
+        happened_on.setdefault(e["key"], day)
+        return day
     outlooks = outcome.outlook(run)
     years = []
     for s, (at, label) in enumerate(zip(dates, labels)):
-        y = s // 12 if monthly else s
+        y = int((at - start).days // 365.25)  # which background year this step falls in
         if background and y >= len(background.years):
             break  # the background life ended
+        until = dates[s + 1] if s + 1 < len(dates) else None
         events = [
             LifeEvent(id=_event_id(person.id, branch, which, s, f"commit:{c.id}"), person_id=person.id,
                       source="simulated", branch_id=branch.id, date=at.isoformat(), domain="growth",
@@ -149,26 +175,32 @@ def _life(person: Person, branch: Branch, which: str, run: int, outcome, backgro
                       confidence=1.0, text=c.message)
             for c in branch.commits if c.patch.get("step") == s
         ]
-        for key in fired[s]:
+        own = []
+        for key in sorted(fired[s], key=lambda k: rank.get(k, 99)):  # causes before their consequences, the choice first
             e = by_key[key]
             if e["kind"] == "recurring" and s and key in fired[s - 1]:
                 continue  # a recurring thing is shown when it starts up again, not every step it lasts
-            events.append(LifeEvent(
+            own.append(LifeEvent(
                 id=_event_id(person.id, branch, which, s, key), person_id=person.id, source="simulated",
-                branch_id=branch.id, date=at.isoformat(), domain=e["domain"], event_type=key,
-                payload={"basis": e["basis"], "evidence_id": e.get("evidence_id"), "revision": branch.revision},
+                branch_id=branch.id, date=dated(e, s).isoformat(), domain=e["domain"], event_type=key,
+                payload={"basis": e["basis"], "evidence_id": e.get("evidence_id"), "revision": branch.revision,
+                         **({"head": True} if e.get("head") else {})},
                 confidence=round(float(outcome.shares[s, outcome.keys.index(key)]), 4), text=e["label"],
             ))
+        heads = [e for e in own if e.payload.get("head")]
+        rest = sorted((e for e in own if not e.payload.get("head")), key=lambda e: (e.date, rank.get(e.event_type, 99)))
+        events = heads + events + rest  # step zero, then the person's own commits, then what follows, in date order
         outlook = dict(outlooks[s])
         solidity = outcome.solidity[s]
         state = fork.model_copy(update={"year": at.year, "age": fork.age + (at.year - fork.year)})
         if background:
             own_families = {DOMAIN_FAMILY.get(e.domain, e.domain) for e in events if e.event_type != "commit"}
             for ev in bg_events[y]:
-                if monthly:
-                    if int(ev.date[5:7]) - 1 != s % 12:
-                        continue
-                    ev = ev.model_copy(update={"date": at.isoformat()})
+                # a background year's events land on the step that covers their own month of that year
+                lands = start + timedelta(days=365.25 * y + 30.4 * (int(ev.date[5:7]) - 1))
+                if lands < at or (until is not None and lands >= until):
+                    continue
+                ev = ev.model_copy(update={"date": at.isoformat()})
                 # the person's own decision is the plot: where it already speaks to this part of
                 # life in this step, the national-average version of the same thing stays out
                 if ev.event_type not in ALWAYS_SHOWN and DOMAIN_FAMILY.get(ev.domain, ev.domain) in own_families:
@@ -184,6 +216,23 @@ def _life(person: Person, branch: Branch, which: str, run: int, outcome, backgro
         years.append(BranchYear(year=at.year, at=at.isoformat(), label=label, solidity=round(solidity, 4),
                                 state=state, events=events, outlook=outlook))
     return _cap_background(years)
+
+
+def _story_order(events: list[dict]) -> list[str]:
+    """Keys in the order a story tells them: the choice, then each event after what it follows or requires."""
+    by_key = {e["key"]: e for e in events}
+    out: list[str] = []
+
+    def visit(key: str, trail: tuple = ()) -> None:
+        if key in out or key in trail or key not in by_key:
+            return
+        for k in [*(by_key[key].get("requires") or []), *(by_key[key].get("after") or [])]:
+            visit(k, trail + (key,))
+        out.append(key)
+
+    for e in sorted(events, key=lambda e: (not e.get("head"), e["window"][0], e["window"][1], e["key"])):
+        visit(e["key"])
+    return out
 
 
 def _cap_background(years: list[BranchYear]) -> list[BranchYear]:
@@ -204,23 +253,29 @@ def _cap_background(years: list[BranchYear]) -> list[BranchYear]:
 def resimulate(person: Person, branch: Branch) -> BranchView:
     dates, labels = _steps(branch)
     patches = [{"step": c.patch.get("step", 0), **c.patch.get("model", {})} for c in branch.commits]
-    branch.model = {**public_model(branch.model.get("events", [])), "widen": branch.model.get("widen", 0.0),
-                    "life_script": branch.model.get("life_script", {})}
-    outcome = simulate_outcomes(person.id, branch.model["events"], len(dates), config.SIM_RUNS, patches,
-                                branch.model["widen"])
+    events = ensure_head(normalize(branch.model.get("events", [])), choice_label(branch.label))
+    resolve_terms(events, load_tables(str(config.DATA_DIR)).trait_effects)
+    widen = branch.model.get("widen", 0.0)
+    offsets = step_offsets(branch.span.unit, branch.span.count, dates[0])
+    durations = [float(b - a) for a, b in zip(offsets, offsets[1:])]
+    outcome = simulate_outcomes(person.id, events, len(dates), config.SIM_RUNS, patches, widen, person.personality, durations)
+    describe(events, outcome, person.personality, widen)
+    branch.measures = measures(outcome, events, offsets, [d.isoformat() for d in dates],
+                               (person.money or {}).get("currency"), person.money)
+    events.sort(key=lambda e: (-e["probability"], e["key"]))  # most likely first
+    branch.model = {**public_model(events), "widen": widen, "life_script": branch.model.get("life_script", {})}
 
     background = None
     if has_background(branch.span):
         tables = load_tables(str(config.DATA_DIR))
-        monthly = branch.span.unit == "months"
-        engine_year = lambda step: branch.fork["year"] + step // 12 + 1 if monthly else dates[step].year
+        engine_year = lambda step: branch.fork["year"] + int((dates[step] - dates[0]).days // 365.25) + 1
         commits = [(engine_year(c.patch.get("step", 0)), {k: v for k, v in c.patch.items() if k not in ("model", "step")})
                    for c in branch.commits]
         sim_params = {k: v for k, v in branch.params.items() if k in ("salary", "graduates_in", "housing_cost_ratio")}
         assumption = {k: v for k, v in branch.assumption.items() if k in STATE_FIELDS or k == "graduates_in"}
         here = branch.assumption.get("city") or branch.fork.get("city")
         background = simulate(tables, person.id, StateVector(**branch.fork), assumption, person.sex,
-                              -(-len(dates) // 12) if monthly else len(dates),
+                              max(1, -(-offsets[-1] // 366)),
                               config.SIM_RUNS, person.personality, commits, sim_params,
                               script={k: bool(branch.model.get("life_script", {}).get(k)) for k in ("partner", "children", "home")},
                               fit_band=BAND_IN_CANADA if in_canada(here) else BAND_ELSEWHERE)
@@ -246,10 +301,10 @@ def create_branch(person: Person, fork: StateVector, label: str, assumption: dic
                   horizon: Optional[int] = None, *, scenario_id: Optional[str] = None,
                   option_id: Optional[str] = None, params: Optional[dict] = None, research: str = "none",
                   span: Optional[Horizon] = None, events: Optional[list[dict]] = None, widen: float = 0.0,
-                  extra_evidence=None, script: Optional[dict] = None) -> BranchView:
-    span = span or Horizon(unit="years", count=horizon or config.SIM_HORIZON_YEARS)
+                  extra_evidence=None, script: Optional[dict] = None, forked_at: Optional[str] = None) -> BranchView:
+    span = span or Horizon(unit="years", count=min(horizon or BIG_DEFAULT_YEARS, MAX_STEPS["years"]))
     branch = Branch(
-        id=uuid.uuid4().hex[:12], person_id=person.id, label=label, forked_at=date.today().isoformat(),
+        id=uuid.uuid4().hex[:12], person_id=person.id, label=label, forked_at=forked_at or date.today().isoformat(),
         assumption=assumption, precondition=precondition, scenario_id=scenario_id, option_id=option_id,
         params=params or {}, research=research, fork=fork.model_dump(), horizon=span.count, span=span,
         model={"events": events or [], "widen": widen, "life_script": script or {}},
@@ -259,15 +314,75 @@ def create_branch(person: Person, fork: StateVector, label: str, assumption: dic
     return resimulate(person, branch)
 
 
+OLD_STEP_DAYS = {"days": 1, "weeks": 7, "months": 30.4375, "years": 365.25}
+
+
+def _to_new_layout(branch: Branch) -> None:
+    """A branch made before steps were graded and step zero was the choice: keep what could happen,
+    re-express each window in days, and lay it out again on a horizon that makes sense (no forty-year paths)."""
+    from .outcome_model import clamp
+
+    per = OLD_STEP_DAYS[branch.span.unit]
+    events = [e for e in (branch.model or {}).get("events", []) if not e.get("head")]
+    for e in events:
+        lo, hi = e.get("window") or [0, 0]
+        e.setdefault("days", [int(lo * per), int((hi + 1) * per) - 1])
+    branch.span = clamp(Horizon(unit=branch.span.unit, count=min(branch.span.count, BIG_DEFAULT_YEARS)
+                                if branch.span.unit == "years" and branch.span.count > 5 else branch.span.count))
+    branch.horizon = branch.span.count
+    offsets = step_offsets(branch.span.unit, branch.span.count, date.fromisoformat(branch.forked_at))
+    events = [e for e in events if e["days"][0] < offsets[-1]]
+    for e in events:
+        e["window"] = window_from_days(offsets, *e["days"])
+    branch.model = {**(branch.model or {}), "events": events}
+    kept = []
+    for c in branch.commits:
+        step = step_of(branch, c.at or None, c.year)
+        if step is not None:
+            c.patch["step"] = step
+            kept.append(c)
+    branch.commits = kept
+
+
+def migrate() -> int:
+    """Branches simulated under an older model are laid out and simulated again, once. Main is never touched."""
+    from .outcome_model import LAYOUT
+
+    rows = db.conn().execute("SELECT id, person_id FROM branches").fetchall()
+    done = 0
+    for row in rows:
+        with lock:
+            branch, _ = db.get_branch(row["id"])
+            person = db.get_person(row["person_id"])
+            model = branch.model or {}
+            current = model.get("layout") == LAYOUT and all("breakdown" in e for e in model.get("events", []))
+            if branch.forming or person is None or current:
+                continue
+            if model.get("layout") != LAYOUT:
+                _to_new_layout(branch)
+            branch.revision += 1
+            resimulate(person, branch)
+            done += 1
+    return done
+
+
 def view(branch_id: str) -> BranchView:
     branch, years = db.get_branch(branch_id)
     return BranchView(branch=branch, years=years)
 
 
-def add_commit(person: Person, branch: Branch, step: int, message: str) -> BranchView:
+def add_commit(person: Person, branch: Branch, step: int, message: str, event_key: Optional[str] = None) -> BranchView:
+    """One more step on the path you are on. Either the person's own words (structure is extracted),
+    or `event_key`: "assume this possibility happens" — that event is forced, no LLM involved."""
     dates, _ = _steps(branch)
-    patch: dict = {"step": step, "model": model_patch(message, branch.model.get("events", []))}
-    if has_background(branch.span):  # a what-if may also change the life-course underneath
+    if event_key:
+        event = next(e for e in branch.model["events"] if e["key"] == event_key)
+        step = max(step, event["window"][0])  # not before its own moment can come
+        message = f"{event['label']} happens"
+        patch: dict = {"step": step, "event_key": event_key, "model": {"force": [event_key], "prevent": [], "likelier": [], "less_likely": []}}
+    else:
+        patch = {"step": step, "model": model_patch(message, branch.model.get("events", []))}
+    if has_background(branch.span) and not event_key:  # a what-if may also change the life-course underneath
         parsed = llm.extract_patch(branch.label, dates[step].year, message)
         background = parsed.model_dump(exclude_none=True) if parsed else rules_assumption(message)
         if background.get("salary"):

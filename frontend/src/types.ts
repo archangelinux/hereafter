@@ -19,6 +19,10 @@ export interface LifeEvent {
   text: string
   /** from the borrowed life shown to a newcomer; never sent to the backend */
   example?: boolean
+  /** step zero of a path: the choice itself. This, and only this, is what a merge records on main. */
+  head?: boolean
+  /** which offering this came from: an upload's name, a URL, "your words" */
+  origin?: string
 }
 
 export interface StateVector {
@@ -63,6 +67,7 @@ export interface Branch {
   model: { events: PossibleEvent[] }
   /** still being drawn: no steps yet, only a guide line. Fills in as revisions land. */
   forming: boolean
+  measures?: Measures | null
   /** part of the borrowed life shown to a newcomer: readable and walkable, never mutable, never sent to the backend */
   example?: boolean
 }
@@ -88,6 +93,39 @@ export interface PossibleEvent {
   basis: Basis
   evidence_id: string | null
   words: string
+  /** share of the 1,000 simulated lives in which it happens within the horizon */
+  probability?: number
+  breakdown?: Breakdown
+  /** what it does to the four measures, each -2..2 */
+  effects?: Record<Measure, number>
+  money_amount?: { value: number; currency: string; per: 'once' | 'month' | 'year'; evidence_id: string | null } | null
+  effects_basis?: 'judgement' | 'sourced'
+}
+
+export type Measure = 'health' | 'joy' | 'fulfilment' | 'money'
+export type Marks = '−−−' | '−−' | '−' | '=' | '+' | '++' | '+++'
+
+/** The four running measures of a path, always as a difference from now (now = 0). */
+export interface Measures {
+  series: Record<Measure, { at: string; mean: number; low: number; high: number }[]>
+  end: Record<Measure, { delta: number; low: number; high: number; marks: Marks }>
+  money_end: { value: number; low: number; high: number; currency: string } | null
+}
+
+export interface Breakdown {
+  base: { kind: 'sourced' | 'personal' | 'estimated' | 'background'; value: number; range: [number, number] | null; evidence_id: string | null; reference_class: string | null; note: string }
+  personality: { trait: 'O' | 'C' | 'E' | 'A' | 'N'; trait_name: string; z: number; confidence: number; direction: 1 | -1; beta: number; shift_logodds: number; basis: 'published' | 'assumed' }[]
+  dependencies: { on: string; label: string; multiplier: number }[]
+  adjusted: number
+  simulated: number
+}
+
+export interface ModelCard {
+  version: string
+  summary: string
+  steps: { title: string; text: string }[]
+  constants: { name: string; value: string | number; meaning: string }[]
+  limits: string[]
 }
 
 export interface Horizon {
@@ -97,6 +135,7 @@ export interface Horizon {
 export type LikelihoodWords = 'almost always' | 'usually' | 'as often as not' | 'sometimes' | 'rarely'
 
 export interface OutlookEntry {
+  probability?: number
   share: number
   words: LikelihoodWords | string
   value: string
@@ -134,6 +173,7 @@ export interface Person {
   birth_year?: number | null
   sex?: 'M' | 'F' | null
   personality?: Personality | null
+  money?: { income: number | null; net_worth: number | null; currency: string } | null
   [key: string]: unknown
 }
 
@@ -192,9 +232,12 @@ export interface Offering {
   links?: string[]
   live_source?: 'github' | 'site'
   files?: File[]
+  income?: number
+  net_worth?: number
+  currency?: string
 }
 
-export type InputKind = 'handles' | 'link' | 'freeform' | 'chat_export' | 'resume' | 'personality' | 'unknown'
+export type InputKind = 'handles' | 'link' | 'freeform' | 'chat_export' | 'ai_chat_export' | 'resume' | 'personality' | 'unknown'
 
 export interface IngestResult {
   person_id: string
@@ -252,6 +295,10 @@ export interface Scenario {
   /** set when this decision is being made inside another branch's life rather than from now */
   assuming_branch_id: string | null
   example?: boolean
+  /** not the decision in focus: the views draw it as a single circle on main */
+  collapsed?: boolean
+  /** a life decision, or a day-to-day choice */
+  scale?: 'big' | 'small'
 }
 
 export interface Question {
@@ -318,6 +365,7 @@ export interface ResearchResponse {
 }
 
 export interface CompareValue {
+  probability?: number
   branch_id: string
   value: string
   words: string
@@ -328,7 +376,8 @@ export interface CompareResponse {
   branches: Branch[]
   checkpoints: { year: number; age: number; label?: string; rows: { aspect: Aspect; differs: boolean; values: CompareValue[] }[] }[]
   /** what is unusually common in each branch against its siblings */
-  distinctive?: { branch_id: string; label: string; words: string; basis: Basis }[]
+  measures?: Record<string, Measures['end']>
+  distinctive?: { branch_id: string; label: string; words: string; basis: Basis; probability?: number }[]
 }
 
 export interface LivesResponse {
@@ -341,6 +390,8 @@ export interface Inventory {
   sources: { source: string; count: number; newest: string; examples: LifeEvent[] }[]
   handles: { source: string; handle: string }[] | string[]
   cached_pages: number
+  /** each thing the person has offered, and how much it contributed */
+  offerings?: { origin: string; count: number; newest: string; source: string }[]
   sent_to_llm: string[]
   stored_nowhere: string[]
 }
@@ -367,4 +418,13 @@ export interface Insets {
   right: number
   bottom: number
   left: number
+}
+
+/** An inline edit to a ticket. Anything left out stays as it is. */
+export interface TicketPatch {
+  situation?: string
+  rename?: { option_id: string; title: string }
+  add_option?: string
+  decide_by?: string | null
+  scale?: 'big' | 'small'
 }

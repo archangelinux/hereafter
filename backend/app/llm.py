@@ -22,14 +22,16 @@ def enabled() -> bool:
     return config.LLM_ENABLED
 
 
-def _parse(system: str, user: str, schema: type[BaseModel], max_tokens: int = 16000, fast: bool = False):
+def _parse(system: str, user: str, schema: type[BaseModel], max_tokens: int = 16000, fast: bool = False,
+           model: str = ""):
     """One structured-output call. Returns the parsed model, or None on any failure."""
     if not enabled():
         return None
-    model = config.LLM_FAST_MODEL if fast else config.LLM_MODEL
+    effort = config.LLM_FAST_EFFORT if fast or model else ""
+    model = model or (config.LLM_FAST_MODEL if fast else config.LLM_MODEL)
     try:
         if config.LLM_PROVIDER == "openai":
-            return _parse_openai(system, user, schema, max_tokens, model, config.LLM_FAST_EFFORT if fast else "")
+            return _parse_openai(system, user, schema, max_tokens, model, effort)
         return _parse_anthropic(system, user, schema, max_tokens, model)
     except Exception as exc:
         log.warning("LLM unavailable (%s: %s); continuing without it", type(exc).__name__, str(exc)[:200])
@@ -97,6 +99,9 @@ class StateFacts(BaseModel):
     relationship_status: Optional[Literal["single", "married", "divorced", "widowed"]] = None
     housing: Optional[Literal["renting", "owning", "with_family"]] = None
     birth_year: Optional[int] = None
+    income: Optional[float] = None      # yearly, only if they state it
+    net_worth: Optional[float] = None   # only if they state it
+    currency: Optional[str] = None
 
 
 class PersonalityEstimate(BaseModel):
@@ -118,8 +123,11 @@ EXTRACT_SYSTEM = """You turn one thing a person has offered about their own life
 structured data. The input may be a public profile page, a resume, their own freeform words, \
 part of a chat export, or something unclassifiable. Whatever it is, the output is the same:
 
-1. `events`: dated things that happened to this person. ISO dates (YYYY-01-01 when only the \
-year is known, YYYY-MM-01 for a month); leave `date` null when no date can be supported. A \
+1. `events`: dated things that happened to this person. Write `date` at exactly the precision \
+the input supports and no finer: "YYYY-MM-DD" for a day, "YYYY-MM" for a month, "YYYY" for a \
+year (a season or term such as "Summer 2021" is "2021"). Never pad a year to January or a month \
+to its first day, and never use today's date for something the input does not date: leave \
+`date` null instead. A \
 `domain` (a lowercase life-area tag: use career, housing, relationship, money or health when \
 the event establishes where they work, live, who they are with, what they earn or their \
 health; otherwise whatever fits — family, friends, learning, growth, body, mind, play, food), \
@@ -128,7 +136,8 @@ city_move, marriage, divorce, birth, home_purchase, project, social_activity, \
 decision_pending, goal_set, goal_kept, goal_dropped, note), a short factual `text`, and a confidence between 0 and 1 for how \
 directly the input supports it. Fill an event's state fields only when that event \
 establishes them. `birth` always means a child born to this person; their own birth is \
-not an event (put the year in `facts.birth_year`).
+not an event (put the year in `facts.birth_year`). `facts.income` (yearly), `facts.net_worth` and `facts.currency` only when \
+they state a figure themselves; never guess.
 2. `facts`: what the input says about their situation as of the time it was written \
 (`as_of`, null if unknown). Null when it says nothing of the kind.
 3. `personality`: Big Five z-scores, only when the input contains actual personality results \
@@ -204,7 +213,8 @@ concrete detail to a line so it feels lived rather than logged, as long as it ch
 about what happened.
 
 Voice: dry, specific, tender. Short declarative sentences. No exclamation marks, no advice, \
-no consolation, and never a probability, likelihood, or statistic. Begin each line with the year and a colon.
+no consolation, and never a probability, likelihood, or statistic. Begin each line with the year and a colon. \
+Tell time in dates and plain words, never as "day 3" or "week 2".
 Example: "2033: You attend the wedding. Table 9."
 
 Return exactly one line for every event_id you are given."""
@@ -344,6 +354,32 @@ class ChapterParagraph(BaseModel):
 class ChapterDraft(BaseModel):
     title: str
     paragraphs: list[ChapterParagraph]
+    recap: str = ""
+
+
+class BiblePerson(BaseModel):
+    name: str
+    role: str
+
+
+class StoryBible(BaseModel):
+    setting: str
+    neighbourhood: str
+    people: list[BiblePerson]
+
+
+BIBLE_SYSTEM = """You are fixing the invented texture of one imagined path through someone's \
+life, once, so that every chapter written later agrees with every other. Invent, plainly and \
+plausibly for the option described: `setting` — one line on the workplace, school, venue or \
+whatever the path mostly happens in (a kind of place, not a real named small business); \
+`neighbourhood` — one line on where they live or spend their time on this path; and `people` — \
+two or three recurring figures with a first name and a role ("Dario, the teammate who sits \
+opposite"). These people are INVENTED: never use a real person from their life unless the \
+person named them in their own words, which are given to you. Keep it modest and specific."""
+
+
+def write_bible(context: str) -> Optional[StoryBible]:
+    return _parse(BIBLE_SYSTEM, context, StoryBible, max_tokens=1500, fast=True)
 
 
 CHAPTER_SYSTEM = """You are writing one chapter of a life that has not happened. A person is \
@@ -368,9 +404,22 @@ evidence list; when a paragraph uses one, put its id in that paragraph's `eviden
 Figures from evidence may appear in the prose. When a paragraph rests on a simulated event, cite \
 the statistic evidence for it if one is listed. When you call back to their real past, cite \
 that personal evidence id.
+5a. You are told, in words, how the person is doing on health, joy, fulfilment and money by the \
+end of this stretch relative to now. Let it colour the telling (tired, flush, restless, settled) — \
+never as a score, a number or a list.
 5. Never state a probability or likelihood in the prose. If the outlook says something is far \
 from certain, let it show as contingency in the telling, not as odds.
-6. Three to five paragraphs, 60–120 words each. The title is two to five words, not a summary."""
+6. Order. The chapter follows the dated events in the order given and never reorders them. \
+If the skeleton begins with the choice itself (marked STEP ZERO), the chapter OPENS on it: the \
+moment of choosing and that first day, before anything else.
+7. Continuity. Use the STORY BIBLE exactly as given — the same setting, the same neighbourhood, \
+the same two or three named people — and pick up from THE STORY SO FAR. Never contradict \
+either, never rename anyone, and introduce no other named characters.
+8. `recap`: two plain sentences saying where things stand as this chapter ends, for whoever \
+writes the next one.
+9. Time is told in dates and plain words ("on 21 September", "that Friday", "the next \
+morning", "by spring"). Never "day 3", "week 2", "month 4" or any other count of steps.
+10. Three to five paragraphs, 60–120 words each. The title is two to five words, not a summary."""
 
 
 def write_chapter(context: str) -> Optional[ChapterDraft]:
@@ -379,30 +428,58 @@ def write_chapter(context: str) -> Optional[ChapterDraft]:
 
 # --- any decision, any size: proposing what could happen (never how likely in numbers) ---
 
-BIN = Literal["rare", "sometimes", "as often as not", "usually"]
+BIN = Literal["rare", "sometimes", "as often as not", "usually", "almost certainly"]
 
 
 class EventLink(BaseModel):
     key: str
-    relation: Literal["likelier", "less_likely", "prevents", "requires"]
+    relation: Literal["likelier", "less_likely", "prevents"]
+
+
+class TraitLink(BaseModel):
+    trait: Literal["O", "C", "E", "A", "N"]
+    effect: Literal["raises", "lowers"]
+
+
+class Effects(BaseModel):
+    health: int = 0
+    joy: int = 0
+    fulfilment: int = 0
+    money: int = 0
+
+
+class MoneyAmount(BaseModel):
+    value: float
+    currency: str
+    per: Literal["once", "month", "year"]
 
 
 class ProposedEvent(BaseModel):
     key: str
     label: str
     domain: str
-    kind: Literal["one_time", "recurring", "state"]
-    first_step: int
-    last_step: int
+    phase: Literal["right_away", "settling_in", "later"]
+    from_day: int
+    to_day: int
+    after: list[str] = []
+    requires: list[str] = []
+    depends_on: list[EventLink] = []
     bin: BIN
-    depends_on: list[EventLink]
+    kind: Literal["one_time", "recurring", "state"] = "one_time"
     reference_class: Optional[str] = None
     search_query: Optional[str] = None
     follow_through: bool = False
+    hazard: Optional[Literal["marriage", "divorce", "fertility", "migration", "job_change", "mortality"]] = None
+    traits: list[TraitLink] = []
+    effects: Effects = Effects()
+    money_amount: Optional[MoneyAmount] = None
+    money_kind: Optional[Literal["salary", "rent", "tuition", "loan", "other"]] = None
 
 
 class ProposedOption(BaseModel):
     option_index: int
+    choice_label: str
+    choice_effects: Effects = Effects()
     events: list[ProposedEvent]
 
 
@@ -417,51 +494,84 @@ class ProposedScenario(BaseModel):
     horizon_unit: Literal["days", "weeks", "months", "years"]
     horizon_count: int
     starts_tonight: bool
+    scale: Literal["big", "small"] = "small"
     options: list[ProposedOption]
     questions: list[ProposedQuestion]
 
 
 MODEL_SYSTEM = """A person is deliberating something — it may be tiny (text an ex tonight, the \
-party or the problem set, a haircut) or large (a move, a job, a degree). For each option they \
-described, lay out WHAT COULD HAPPEN if they take it, so that a simulation can live it forward. \
-You propose possibilities; you never say what will happen, and you never give a number.
+party or the problem set) or large (a move, a job, a degree). For each option they described, \
+lay out WHAT COULD HAPPEN if they take it, as a causal story a simulation can live forward. You \
+propose possibilities; you never say what will happen, and you never give a number.
 
-1. Horizon: how far forward this decision actually plays out. `days` (up to 30) for tonight / \
-this week; `weeks` (up to 26); `months` (up to 36); `years` (up to 40) for life-shaping choices. \
-Steps are numbered 0..count-1; step 0 is today (or this week / this month / next year). If the \
-horizon is given to you, use it as given.
-2. For each option, 8 to 14 possible events, genuinely about THAT option. Three universities \
-are three different places — different programs, co-op or not, residence or a commute, a \
-different city, different people — not one list with the name swapped. The person may have \
-written almost nothing (a sentence and the option names): that is enough; use what you know of \
-the named places, programs, habits and situations to make each option concrete. Specific and human, in second person, the way the \
-person would recognise them: "they reply within a day", "you sleep under five hours", "you are \
-still not drinking at week four", "the loan comes back on time", "you stop going after the third \
-session". Cover the near consequence and the slower ones, the good, the bad and the merely \
-awkward. Include two or three that are unlikely but would matter or be interesting if they \
-happened. No event may be about a named or identifiable third person's private life.
-3. Track the outcomes the person actually cares about in EVERY option under the same `key` \
-(for instance `regret_next_morning`, `sleep_under_five_hours`, `still_talking_in_a_month`), so \
-the options can be compared on them. At least three shared keys.
-4. Each event: `key` (snake_case), `label`, `domain` (a lowercase life-area tag such as work, \
-money, health, body, mind, love, family, friends, learning, growth, home, play, food), `kind` \
-(`one_time` happens at most once; `state` becomes true and stays true; `recurring` can happen \
-in any step), the window of steps in which it can happen, and `depends_on` other keys of the \
-same option (`likelier`, `less_likely`, `prevents`, `requires`).
-5. `bin` is your only statement about likelihood, and it is verbal: how often this happens to \
-people in this situation within its window (for `recurring`: in any one step) — rare, \
-sometimes, as often as not, usually. It is used only if no published figure can be found.
-6. Nobody publishes a statistic about this person's exact event, so never look for one. For an \
+1. Horizon: the stretch where this decision actually plays out, and no longer. `days` (up to \
+30) for tonight or this week; `weeks` (up to 26); `months` (up to 36); `years` for a life \
+decision: 3 by default, never more than 5. If the horizon is given to you, use it as given. \
+`scale` is `big` for a life decision (six months or more) and `small` for a day-to-day one.
+2. `choice_label`: the option as the first thing that happens, second person, present tense: \
+"You accept the offer", "You go to the housewarming", "You say no". The simulation adds it \
+itself as day 0; do not repeat it among the events.
+3. For each option, 10 to 14 possible events that are CONSEQUENCES OF THAT OPTION, told in \
+three phases, in order:
+   - `right_away`: the obvious first consequences, which must be there — the job starts, the \
+move happens, the first day, the first week, the message is read, the money leaves the account;
+   - `settling_in`: what the first months (or, for a small decision, the next days) bring;
+   - `later`: where it can lead by the end of the horizon, including two or three unlikely \
+outcomes that would matter.
+   Each event is a MOMENT — something that happens on a day — never a standing state: "you \
+make your first friend outside work", not "you have friends who are not from work"; "you sign \
+a lease on a room", not "you live in a shared flat". Nothing generic that would be equally true \
+on any path (no "you feel stressed sometimes"). Specific, human, second person. Three \
+universities are three different places; use what you know of the named places, programs, \
+employers and situations even when the person wrote almost nothing. No event may be about a \
+named or identifiable third person's private life. A label never counts days or weeks.
+4. When: `from_day` and `to_day` are days after the decision (0 = the day of the decision) \
+between which the moment can fall, matching its phase. A first day at a job that starts in \
+January, decided in September, is around day 105, not day 0.
+5. Order and cause. `after`: keys of events this one cannot come before (you cannot be \
+promoted before you start; you cannot miss home before you have moved). `requires`: keys of \
+events without which this one cannot happen at all (no second date without a first). \
+`depends_on`: other events that make it `likelier`, `less_likely`, or that it `prevents`. Every \
+settling-in and later event should hang off at least one earlier event through `after` or \
+`requires`, so the path reads as one story rather than a list.
+6. Wherever the same thing can happen on more than one option, use the SAME `key` on each (for \
+instance `regret_the_choice`, `first_real_friend_there`, `money_runs_tight`), so the options \
+can be compared. At least three shared keys.
+7. Each event also has: `key` (snake_case), `domain` (a lowercase life-area tag such as work, \
+money, health, body, mind, love, family, friends, learning, growth, home, play, food), and \
+`kind`: `one_time` almost always; `recurring` only for something that genuinely happens again \
+and again.
+8. `bin` is your only statement about likelihood, and it is verbal: how often this happens to \
+people in this situation within its window, GIVEN that whatever it requires has happened — \
+rare, sometimes, as often as not, usually, almost certainly. The obvious first consequences of \
+a choice (you sign, you move, the first day comes) are `almost certainly`; do not hedge them, \
+or the path never gets started. It is used only if no published figure is found.
+9. Nobody publishes a statistic about this person's exact event, so never look for one. For an \
 event where it helps, name the nearest researchable REFERENCE CLASS — the studied population \
 whose published rate is the closest honest stand-in — as one phrase in `reference_class`, and a \
 `search_query` that targets that class. Examples: "they reply within a day" -> "response and \
 reconciliation rates among former partners"; "you finish the degree" -> "graduation and \
-first-year retention rates for that university and program"; "still not drinking at week \
-four" -> "completion rates in one-month alcohol abstinence challenges". Leave both null when no \
-such class plausibly has published figures. At most four per option; prefer what matters most.
-7. Set `follow_through` true on events that are simply the person keeping a commitment they \
+first-year retention rates for that university and program". Leave both null when no such \
+class plausibly has published figures. At most four per option; prefer what matters most.
+10. Set `follow_through` true on events that are simply the person keeping a commitment they \
 themselves set (finishing the month, sticking to the plan).
-8. `questions`: at most three, often none. Ask only what (a) is not already answered in what \
+11. Personality. If, and only if, one of the Big Five traits (O openness, C conscientiousness, \
+E extraversion, A agreeableness, N neuroticism) plainly bears on whether this event happens to \
+someone, name at most two in `traits`, each with an `effect`: `raises` if people higher in the \
+trait are more likely to have it happen, `lowers` if less likely. A direction only — never a \
+size, which is fixed elsewhere. Leave `traits` empty when unsure. If the event IS one of these \
+life-course transitions — marriage, divorce, fertility (having a child), migration (moving \
+city or country), job_change, mortality — name it in `hazard`.
+12. What each moment MEANS, as change from how the person is now, on four measures: `health`, \
+`joy` (short-term happiness, a pulse that fades in days), `fulfilment` (the long-term kind) and \
+`money`. Each is an integer from -2 to +2, and 0 for most. This is a judgement about what the \
+event means if it happens — never about whether it happens. The choice itself has \
+`choice_effects` too. If THE PERSON'S OWN WORDS give a real figure that belongs to this moment (a \
+salary that starts, a rent, tuition, a loan), copy it into `money_amount`: `value` signed \
+(positive coming in, negative going out), `currency`, and `per` (once / month / year). Never \
+estimate an amount. If no figure is given but a real one would apply, name its `money_kind` so \
+research can attach one.
+13. `questions`: at most three, often none. Ask only what (a) is not already answered in what \
 their log says, and (b) would materially change what could happen in at least one option — \
 for a choice of university, the intended major; for a move, whether a partner comes too. Each \
 has a short `why` clause, two to five quick `choices`, and the option indexes it applies to \
@@ -553,3 +663,22 @@ quoting or pointing at what you relied on, or "nothing in their log or words" if
 
 def extract_life_script(situation: str, known: str) -> Optional[LifeScript]:
     return _parse(LIFE_SCRIPT_SYSTEM, f"Their words:\n{situation}\n\nFrom their log:\n{known or '(nothing)'}", LifeScript, max_tokens=1500)
+
+
+# --- reading a one-line decision ---
+
+
+class Ticket(BaseModel):
+    situation: str
+    options: list[str]
+
+
+TICKET_SYSTEM = """Someone has written down a decision they are turning over, the way they would \
+write a ticket or a commit message: plainly, in one or two lines. Return `situation` (their own \
+words, lightly tidied, never embellished) and `options`: the two to four things they could do, as \
+short titles in their own words. If they name only one course of action, the second option is \
+simply not doing it, phrased naturally. Never add an option they did not name or clearly imply."""
+
+
+def extract_ticket(text: str) -> Optional[Ticket]:
+    return _parse(TICKET_SYSTEM, text, Ticket, max_tokens=2000, model=config.LLM_TICKET_MODEL)

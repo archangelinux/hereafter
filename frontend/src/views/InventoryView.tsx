@@ -4,11 +4,27 @@ import { dateLabel, SOURCE_WORDS } from '../format'
 import type { Inventory } from '../types'
 import { Sheet } from './Sheet'
 
-export function InventoryView({ api, personId, onOffer, onErased, onClose }: { api: Api; personId: string; onOffer: () => void; onErased: () => void; onClose: () => void }) {
+export function InventoryView({ api, personId, onOffer, onErased, onChanged, onClose }: { api: Api; personId: string; onOffer: () => void; onErased: () => void; onChanged: () => void; onClose: () => void }) {
   const [inv, setInv] = useState<Inventory | null>(null)
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [forgetting, setForgetting] = useState<string | null>(null)
+
+  const forget = async (origin: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.forget(personId, origin)
+      setForgetting(null)
+      setInv(await api.inventory(personId))
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nothing was forgotten.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     api.inventory(personId).then(setInv).catch(() => setError('The inventory could not be read just now.'))
@@ -28,11 +44,31 @@ export function InventoryView({ api, personId, onOffer, onErased, onClose }: { a
   }
 
   return (
-    <Sheet title="What Hereafter knows" eyebrow="and where it came from" lede="Everything held about you, by source. Your name and birth year stay on this machine, encrypted; the life log is keyed by a random id." onClose={onClose}>
+    <Sheet title="What Hereafter knows" eyebrow="and where it came from" lede="Everything held about you, and where it came from." onClose={onClose}>
       <p className="log__tell"><button type="button" className="verb verb--primary" onClick={onOffer}>give Hereafter more</button></p>
       {!inv && !error && <p className="dim">counting</p>}
       {inv && (
         <div className="inventory">
+          {!!inv.offerings?.length && (
+            <section className="offered">
+              <h2 className="caps">what you have offered</h2>
+              <ul>
+                {inv.offerings.map((o) => (
+                  <li key={o.origin}>
+                    <span><b>{o.origin}</b> <span className="offered__how" title={`${o.count} entries on main`}>· gave Hereafter {o.count <= 2 ? 'a little' : o.count <= 8 ? 'some' : 'a lot'} · last {dateLabel(o.newest)}</span></span>
+                    <button type="button" className="quiet" onClick={() => setForgetting(forgetting === o.origin ? null : o.origin)}>forget this</button>
+                    {forgetting === o.origin && (
+                      <p className="offered__confirm">
+                        <span>Everything Hereafter learned from this goes. You can offer it again later.</span>
+                        <button type="button" className="verb" disabled={busy} onClick={() => void forget(o.origin)}>{busy ? 'forgetting' : 'forget it'}</button>
+                        <button type="button" className="quiet" onClick={() => setForgetting(null)}>keep it</button>
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section>
             <h2 className="caps">held, by source</h2>
             <ul className="inventory__sources">
@@ -56,7 +92,7 @@ export function InventoryView({ api, personId, onOffer, onErased, onClose }: { a
           </section>
           <section className="inventory__erase">
             <h2 className="caps">erase</h2>
-            <p>You cannot rewrite your past here, but you can burn the book. Erasing removes the log, every branch, the evidence gathered for you and every kept page, everywhere. It is the only deletion Hereafter has.</p>
+            <p>Removes everything about you, everywhere. It cannot be undone.</p>
             <form onSubmit={erase}>
               <label className="field">
                 <span className="caps">write the word erase</span>

@@ -28,6 +28,26 @@ roads not taken.
 everything. The UI must make the two feel as different as they are.
 **Rejected.** Treating merge as reversible (it would make main editable, breaking rule 1.3).
 
+### 1.2a The vocabulary, settled — *building*
+"Commit a what-if" and "decide inside this life" confused the person who designed the product,
+so they are gone. The whole vocabulary, as it appears in the UI:
+
+| Word | Meaning |
+|---|---|
+| **main** | What really happened. |
+| **decision** | A fork: a node with two or more paths. |
+| **path** | One option, lived forward. |
+| **step** | One thing on a path. The first step is the choice itself. |
+| **HEAD** | The path you have selected; its first step is what a merge commits. |
+| **Commit** | Add one step to the path you are on — typed, or by picking one of the listed possibilities ("assume this happens"). The path stays a single line; everything after re-simulates and the percentages update. Undoable. |
+| **Branch** | Split the path you are on, at this point, into two or more paths — a decision on the path. You can branch off a commit. Undoable. |
+| **Undo** | Remove your last commit. |
+| **Switch** | Move to another path. |
+| **Merge** | Make HEAD's choice real on main. Only that first step. Permanent. |
+
+The rule the UI teaches once: *Commit adds a step. Branch splits the path. Both can be undone —
+only Merge is permanent.*
+
 ### 1.3 The past is append-only; "now" is the server clock — *built*
 **Decision.** The event store exposes `append` and queries only. Elasticsearch writes use
 `op_type=create`, so an existing id is never overwritten. No route accepts a date for "now".
@@ -41,6 +61,22 @@ asserts the API has no PUT/PATCH/DELETE on main.
 Each option becomes a branch. Hereafter does not invent the options.
 **Why.** The first build offered a handful of dropdown fields (city, employment, housing), which
 made every choice feel the same. The decision and its alternatives are the person's.
+
+### 1.4a A decision is a labelled node with paths — *built (API); UI building*
+**Decision.** Creating a decision is as plain as a commit dialog: a short **decision** label (the
+node), then two or more **path** labels (the options), in the person's own words. Nothing else —
+no prompt sentence, no examples, no option descriptions, no dates, no horizon or kind pickers.
+Whether it is a big life decision or a small day-to-day one is judged by Hereafter and shown as a
+tag on the ticket that the person can flip. Tickets appear plainly, as typed, like rows in an
+issue tracker; anything can be corrected inline afterwards.
+**Why.** "there's no prompt for dilemmas that happen in my life. i create my own tickets and they
+show up plainly — it is the narration of subsequent events that is written out in an
+entertaining interesting way." All the writing effort belongs in the narration; every other
+surface should be as terse as a developer tool.
+**Rejected on the way.** (1) The guided composer sheet of 5.3 — "way too much". (2) A single
+free-text "what are you deciding?" line with the options parsed out of it — still a prompt, and
+less explicit than naming the paths. The API keeps accepting that one-line form (`text`), but the
+UI does not use it.
 
 ### 1.5 Any decision, any size — *built*
 **Decision.** A scenario is anything being deliberated: texting an ex tonight, a month without
@@ -197,6 +233,17 @@ themselves, and follows no links found on a page.
 events about the owner are kept; other people's names are replaced ("Person A") before any text
 reaches the LLM.
 
+### 3.3a Assistant conversation exports; forgetting one offering — *built*
+**Decision.** A Claude or ChatGPT export is accepted like any other offering. Only the person's
+own side is read; assistant replies and account files are never opened; nothing raw is persisted.
+Every event records its `origin`, the inventory lists offerings with how much each contributed,
+and **forget** removes one offering's events from main.
+**Why not persist the raw export.** It is everything someone ever asked an assistant — far more
+than Hereafter needs, and a liability to hold. What matters (what happened, what they are
+turning over) survives as structured events; the file can always be offered again.
+**On immutability.** Main still cannot be *edited*. Forget and erase are the owner withdrawing
+what they gave, not rewriting what happened.
+
 ### 3.4 Security posture — *built*
 **Decision.** Random person ids; a bearer token per person (stored hashed); encryption at rest
 for everything outside Elastic (person record, page cache, chapters); CORS limited to the local
@@ -300,6 +347,101 @@ sees two or three example scenarios already branched (one small, one medium, one
 chapters and evidence, plus a few example past events so now sits mid-life. They are labelled
 as examples ("a borrowed life"), drawn slightly paler, cannot be merged or changed, never reach
 the backend, and step aside when the person creates their first real scenario.
+
+### 5.6 Big decisions and small ones look different; paths flow; text is readable — *building*
+**Decision.**
+- Every scenario is **big** (a life decision) or **small** (a day-to-day action or dilemma).
+  Habit-style scenarios are not used as examples: they do not paint a clear picture.
+- **Big**: a large round plaza on main; options leave in entirely different main directions as
+  full-width paths; when one is merged, *main itself turns* along it and the others stay, greyed.
+- **Small**: a small circle on main; options are thin, short offshoots; a merged one loops back
+  into main like a thin cup handle; unchosen ones remain as short grey stubs. Main does not turn.
+- **Paths are fluid**: one smooth continuous flowing band. Circles appear *only* at decisions —
+  the rows of stepping stones of 5.4 read as "ugly and confusing" once many paths were on screen.
+  No islets under the path; sky, clouds, palette and the small figure stay.
+- **Text**: one enforced type scale, nothing under 12px, reading text always full-strength
+  #5C5347 with a single secondary tone for metadata — no faint or blurred text; state is shown
+  with a word, not by fading. **Dates only**: no "week 3" or "day 3" anywhere.
+**Why.** With several scenarios open, everything looked alike: the eye could not tell a life
+decision from tonight's dilemma, and the metaphor (a merge changes main; a small choice is a
+detour) was not visible in the geometry.
+
+### 5.7 The HUD is one layout system, sized for real windows — *building*
+**Decision.** The HUD is rebuilt as a single grid shell (left rail, free centre, right rail,
+narration band) on one 8 px spacing scale with identical card chrome, compact type (body 14,
+narration 16, labels 12), and breakpoints from about 700 px to 1700 px wide. Nothing is placed by
+magic numbers, nothing can overlap, and the merge control is never dropped. The first screen is a
+compact plain form in ordinary words ("About you", "Files", "Continue").
+**Why.** Everything had been designed and checked only at 1440×900. In a normal-sized window
+the right-hand column — including merge — vanished, panels overlapped, and type specified at
+16–18 px filled its containers: "everything is way bigger or squished and doesn't fit nicely".
+**Lesson.** Verify UI at the sizes people actually use, not one comfortable desktop size.
+
+### 5.8 Live a path on the left, merge HEAD on the right — *building*
+**Decision.** Selecting a path and living it through (the figure walks, the narration advances) is
+exploration. The right-hand panel is where a decision is actually made: it lists the decision's
+paths with a `HEAD` marker on the one selected, and its merge button commits **only the first
+step of that path — the choice itself** — to main. Nothing of the simulated future becomes real:
+main advances by one step, the rest of the chosen path stays a projection, siblings grey out.
+Confirmation is typed, in place, in the panel.
+
+### 5.9 Probabilities are shown, ordered, and explained — *building*
+**Decision.** Likelihood words are replaced by probability values. "What could happen" is ordered
+most to least likely with a percentage per event; each opens to a breakdown — base rate and its
+source (or the estimate's range), the personality adjustment per trait, dependencies, and "happened
+in N of 1,000 simulated lives" — and a model card (`GET /model`, `docs/MODEL.md`) states the whole
+method, every constant, and its limits. The narration prose stays number-free.
+**Supersedes.** The original "no numbers anywhere" rule and 2.7's words-only surfaces, at the
+person's explicit request.
+**The model, in one line.** adjusted = logistic(logit(base rate) + Σ direction × β × z × confidence),
+then dependencies, then the share of 1,000 sampled lives. β is a published effect where one exists;
+otherwise a fixed small constant (0.20 log-odds per SD) whose *direction* is a judgement and whose
+*size* is not — and the UI says which.
+
+### 5.10 The demo has to make sense: the person's verdict and what changes — *building*
+**Verdict.** "i don't like this demo it doesn't even make sense at all and it's not logical" —
+and, asked what, all four: the made-up story, what happens on a path, too much at once, the flow.
+**What was actually wrong** (from reading the live demo): a job-offer path with a 40-year horizon
+whose lived life was five events, out of causal order ("you miss home" before "you find a room"),
+with a state passed off as an event, a background-table baby in the middle, the job itself never
+starting, and thirty-four empty years; a two-event housewarming; a sample person with three big
+decisions, a nested one, a stale one and a picked moment all on screen at once.
+**Decision.**
+- *Paths are causal stories.* Step zero of every path is the choice itself (HEAD — the one step a
+  merge commits). Possible events are consequences of that option, in phases (right away,
+  settling in, later), with `after` / `requires` ordering enforced in the sampler; moments, not
+  states; nothing generic.
+- *Horizons fit.* Small: hours to weeks. Big: about three years (five at most), dated steps weekly
+  then monthly then quarterly. No multi-decade branches.
+- *The life you read is representative*: the run closest to "every event at 50% or more happens,
+  the rest do not" — not the sparsest run. (Replaces the medoid of 2.6 for outcome models.)
+- *Background tables off by default.* They read as noise inside a personal story.
+- *Narration is consistent*: a per-branch story bible and a running "story so far".
+- *One decision in focus.* Everything else collapses to a circle on main. Nested, stale, picked
+  and rare things appear only when looked for.
+- *A guided flow*: one plain next-step line at each stage, gone once learned.
+- *Your own life is the demo.* A returning person lands on their own main; the sample is one
+  simple coherent story, reachable only on request.
+- Panels have no borders, only shadows.
+
+### 2.9 Four measures, as change from now — *building*
+**Decision.** Every path tracks health, joy (short-term happiness / dopamine), fulfilment
+(long-term) and money as a **difference from where the person is now** (+ / −), never as an
+absolute score. Each possible event carries a small effect (−2…+2) on each measure; the sampler
+accumulates them per simulated life — joy as a fast-decaying pulse, health and fulfilment building
+and persisting, money both on the scale and, where real figures exist (salary, rent, tuition, the
+person's own income and net worth), as a currency ledger — and reports the mean with a 10–90 % band.
+**Why deltas.** An absolute "health score" would need a baseline nobody can measure; a change from
+now is what a decision actually does, it needs no invented starting number, and it lets two paths
+be compared directly.
+**Honesty.** Effects are judgements about what an event means (not about whether it happens),
+except money backed by evidence. The model card says so.
+
+### 5.11 The 3D world must be clean up close — *building*
+Bands meet decision circles flush, every end is finished (capped, tapered into mist, or hidden in a
+junction), no hollow cross-sections, no ribbed or stacked translucent meshes, the HEAD ring and
+event inlays sit exactly on the band, the figure stands on the centreline. Verified with close-up
+screenshots of every join and end, not from overview distance.
 
 ---
 

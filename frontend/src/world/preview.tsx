@@ -29,8 +29,9 @@ function decide(views: BranchView[], scenarios: Scenario[], events: LifeEvent[],
 function Preview() {
   const [data, setData] = useState(() => {
     const base = { views: demoBranches, scenarios: demoScenarios, events: demoTrunkEvents }
-    const withCommit = { ...base, views: base.views.map((v) => (v.branch.id === 'br-sf' ? { ...v, branch: { ...v.branch, commits: [{ id: 'c1', branch_id: 'br-sf', year: v.years[3].year, at: v.years[3].at, message: 'We agreed I would come home for the winters', patch: {}, created_at: today }] } } : v)) }
-    return params.get('state') === 'merged' ? decide(withCommit.views, withCommit.scenarios, withCommit.events, 'br-masters') : withCommit
+    const withCommit = { ...base, views: base.views.map((v) => (v.branch.id === 'br-vancouver' ? { ...v, branch: { ...v.branch, commits: [{ id: 'c1', branch_id: 'br-vancouver', year: v.years[3].year, at: v.years[3].at, message: 'We agreed I would come home for the winters', patch: {}, created_at: today }] } } : v)) }
+    const state = params.get('state')
+    return state === 'merged' ? decide(withCommit.views, withCommit.scenarios, withCommit.events, 'br-raise') : state === 'merged-small' ? decide(withCommit.views, withCommit.scenarios, withCommit.events, 'br-dinner') : withCommit
   })
   const [hidden, setHidden] = useState<string[]>(params.get('hide')?.split(',') ?? [])
   const [activeId, setActiveId] = useState<string | null>(params.get('active'))
@@ -38,7 +39,8 @@ function Preview() {
   const [rareId, setRareId] = useState<string | null>(params.get('rare'))
   const [heard, setHeard] = useState('')
 
-  const scenarios = useMemo(() => data.scenarios.filter((s) => !hidden.includes(s.id)), [data, hidden])
+  const [focus, setFocus] = useState<string | null>(params.get('focus'))
+  const scenarios = useMemo(() => data.scenarios.filter((s) => !hidden.includes(s.id)).map((s) => (focus ? { ...s, collapsed: s.id !== focus } : s)), [data, hidden, focus])
   const views = useMemo(() => data.views.filter((v) => scenarios.some((s) => s.branch_ids.includes(v.branch.id))), [data, scenarios])
   const now = useMemo(() => new Date().toISOString(), [])
   const rare = rareId && rareId === activeId ? (demoRare[rareId]?.years ?? null) : null
@@ -56,6 +58,7 @@ function Preview() {
         onSwitch={(id) => (setActiveId((a) => (a === id ? null : id)), setStep(0))}
         onSeek={(id, s) => (setActiveId(id), setStep(s))}
         safeInsets={params.has('hud') ? { top: 24, right: 24, bottom: 210, left: 370 } : { top: 44 }}
+        onFocusScenario={(id) => (setFocus(id), setHeard(`focus: ${id}`))}
         onOpenLog={() => setHeard('open log')}
         onArrive={(eventId) => setHeard(`arrived: ${eventId}`)}
       />
@@ -63,8 +66,8 @@ function Preview() {
         <button onClick={() => (setActiveId(null), setStep(null))}>overview</button>
         <button onClick={() => setStep((s) => (s ?? 0) + 1)}>step on</button>
         <button onClick={() => setStep((s) => Math.max(0, (s ?? 0) - 1))}>step back</button>
-        <button onClick={() => setData((d) => decide(d.views, d.scenarios, d.events, 'br-masters'))}>merge masters</button>
-        <button onClick={() => setHidden((h) => (h.includes('sc-noor') ? h.filter((x) => x !== 'sc-noor') : [...h, 'sc-noor']))}>undo / redo noor</button>
+        <button onClick={() => setData((d) => decide(d.views, d.scenarios, d.events, 'br-raise'))}>merge masters</button>
+        <button onClick={() => setHidden((h) => (h.includes('sc-friday') ? h.filter((x) => x !== 'sc-friday') : [...h, 'sc-friday']))}>undo / redo noor</button>
         <button onClick={() => setRareId((r) => (r ? null : activeId))}>rare life</button>
         <span>{heard}</span>
       </div>

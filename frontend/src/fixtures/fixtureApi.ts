@@ -1,7 +1,7 @@
 // The offline sample, behaving like the backend: scenarios branch, commits re-draw and undo,
 // merges are permanent, research plays back over a few seconds.
 
-import type { Api } from '../api'
+import { applyPatch, LOCAL_MODEL, type Api } from '../api'
 import { compareViews, plainChapter } from '../derive'
 import type { BranchView, Commit, LifeEvent, Scenario } from '../types'
 import { demoBranches, demoChapters, demoEvidence, demoInventory, demoPerson, demoRare, demoRareChapters, demoResearch, demoScenarios, demoState, demoTrunkEvents, THIS_YEAR } from './demo'
@@ -9,9 +9,11 @@ import { demoBranches, demoChapters, demoEvidence, demoInventory, demoPerson, de
 const RESEARCH_STEP_MS = 1400
 
 export function createFixture(): Api {
-  const events: LifeEvent[] = structuredClone(demoTrunkEvents)
-  const views: BranchView[] = structuredClone(demoBranches)
-  const scenarios: Scenario[] = structuredClone(demoScenarios)
+  // ?offline&empty: the same person before any decision, to see the empty state
+  const blank = new URLSearchParams(location.search).has('empty')
+  const events: LifeEvent[] = structuredClone(demoTrunkEvents).filter((e) => !blank || e.event_type !== 'decision')
+  const views: BranchView[] = blank ? [] : structuredClone(demoBranches)
+  const scenarios: Scenario[] = blank ? [] : structuredClone(demoScenarios)
   const undoStack = new Map<string, BranchView[]>()
   const researchStarted = new Map<string, number>()
   const chapterAskedAt = new Map<string, number>()
@@ -27,7 +29,7 @@ export function createFixture(): Api {
   }
 
   const told = (text: string, event_type: string, payload: Record<string, unknown> = {}): LifeEvent => ({
-    id: `main-told-${++counter}`, person_id: demoPerson.id, source: 'told', branch_id: 'main', date: today(), domain: 'career', event_type, payload, confidence: 1, text,
+    id: `main-told-${++counter}`, person_id: demoPerson.id, source: 'told', branch_id: 'main', date: today(), domain: 'career', event_type, payload, confidence: 1, text, origin: 'your words',
   })
 
   /** Research that finishes re-simulates the branch: the revision bumps once. */
@@ -74,7 +76,7 @@ export function createFixture(): Api {
       const id = `sc-local-${++counter}`
       const made: BranchView[] = options.map((o, i) => {
         // a long horizon borrows the long sample lives; anything else borrows tonight's
-        const template = views.filter((v) => v.branch.scenario_id === (horizon?.unit === 'years' ? 'sc-offer' : 'sc-noor'))[i % 3]
+        const template = views.filter((v) => v.branch.scenario_id === (horizon?.unit === 'years' || extra?.scale === 'big' ? 'sc-job' : 'sc-friday'))[i % (horizon?.unit === 'years' || extra?.scale === 'big' ? 3 : 2)]
         const bid = `br-local-${++counter}`
         const copy: BranchView = structuredClone(template)
         copy.branch = {
@@ -96,11 +98,28 @@ export function createFixture(): Api {
         horizon: horizon ?? { unit: 'weeks', count: 12 },
         questions: [],
         assuming_branch_id: extra?.assuming_branch_id ?? null,
+        scale: extra?.scale ?? (horizon?.unit === 'years' ? 'big' : 'small'),
         options: options.map((o, i) => ({ id: made[i].branch.option_id!, title: o.title, details: o.details, deadline: o.deadline ?? null })),
         branch_ids: made.map((m) => m.branch.id),
       }
       scenarios.push(scenario)
       return structuredClone({ scenario, branches: made })
+    },
+    async editTicket(scenario, patch) {
+      const i = scenarios.findIndex((x) => x.id === scenario.id)
+      if (i < 0) throw new Error('No such ticket.')
+      scenarios[i] = applyPatch(scenarios[i], patch)
+      if (patch.rename) for (const v of views) if (v.branch.option_id === patch.rename.option_id) v.branch.label = patch.rename.title
+      if (patch.add_option) {
+        const more = await this.createScenario(scenario.person_id, scenarios[i].situation, [{ title: patch.add_option, details: '' }], { horizon: scenarios[i].horizon, scale: scenarios[i].scale })
+        const added = more.branches[0]
+        const stray = scenarios.findIndex((x) => x.id === more.scenario.id)
+        scenarios.splice(stray, 1)
+        const mine = views.find((v) => v.branch.id === added.branch.id)!
+        mine.branch.scenario_id = scenario.id
+        scenarios[i] = { ...scenarios[i], options: [...scenarios[i].options, more.scenario.options[0]], branch_ids: [...scenarios[i].branch_ids, added.branch.id] }
+      }
+      return structuredClone({ scenario: scenarios[i], branches: views.filter((v) => v.branch.scenario_id === scenario.id) })
     },
     async answer(scenarioId, answers) {
       const scenario = scenarios.find((x) => x.id === scenarioId)
@@ -131,7 +150,7 @@ export function createFixture(): Api {
       const shown = Math.max(0, Math.min(steps.length, Math.floor((Date.now() - started) / RESEARCH_STEP_MS) + 1))
       return { branch_id: branchId, research: v.branch.research, steps: steps.slice(0, shown) }
     },
-    async commit(branchId, at, message) {
+    async commit(branchId, at, message, eventKey) {
       const year = +at.slice(0, 4)
       const v = find(branchId)
       if (v.branch.status !== 'open') throw new Error('Only an open branch can take a commit.')
@@ -139,6 +158,7 @@ export function createFixture(): Api {
       const commit: Commit = { id: `cm-${++counter}`, branch_id: branchId, year, at, message, patch: {}, created_at: new Date().toISOString() }
       v.branch.commits = [...v.branch.commits, commit]
       v.branch.revision += 1
+      v.branch.model = { events: v.branch.model.events.map((e, n) => (e.key === eventKey ? { ...e, probability: 1, words: 'certain: you committed it' } : { ...e, probability: e.probability === undefined ? undefined : Math.min(0.97, Math.max(0.03, e.probability + (n % 2 ? 0.08 : -0.06))) })).sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0)) }
       // what follows a commit is redrawn: later events slip a step, and the thousand lives agree a little less
       const from = Math.max(0, v.years.findIndex((y) => y.at >= at))
       v.years = v.years.map((y, i) => (i <= from ? y : { ...y, solidity: Math.max(0.6, y.solidity * 0.94) }))
@@ -229,13 +249,25 @@ export function createFixture(): Api {
       events.push(goal)
       return { goal_event: goal, branch: v.branch }
     },
+    async model() {
+      return LOCAL_MODEL
+    },
     async inventory() {
       const bySource = new Map<string, LifeEvent[]>()
       for (const e of events) bySource.set(e.source, [...(bySource.get(e.source) ?? []), e])
       return {
         sources: [...bySource].map(([source, es]) => ({ source, count: es.length, newest: es[es.length - 1].date, examples: es.slice(-3) })),
         ...demoInventory,
+        offerings: [...new Set(events.map((e) => e.origin).filter((o): o is string => !!o))].map((origin) => {
+          const from = events.filter((e) => e.origin === origin)
+          return { origin, count: from.length, newest: from[from.length - 1].date, source: from[0].source }
+        }),
       }
+    },
+    async forget(_person, origin) {
+      const before = events.length
+      for (let i = events.length - 1; i >= 0; i--) if (events[i].origin === origin) events.splice(i, 1)
+      return { origin, removed: before - events.length }
     },
     async erase() {
       const erased = { events: events.length, evidence: demoEvidence.length, branches: views.length, cached_pages: demoInventory.cached_pages }

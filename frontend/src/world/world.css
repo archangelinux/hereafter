@@ -15,6 +15,7 @@
 }
 
 .hw-note,
+/* the one coral word in the world: where you are */
 .hw-here {
   font-family: 'Cormorant Garamond', 'Cormorant', Georgia, serif;
   color: #5c5347;
@@ -76,7 +77,7 @@
 .hw-tag__aside {
   font-size: 15px;
   font-weight: 400;
-  color: #8a8073;
+  color: #5c5347;
   max-width: 200px;
   white-space: normal;
 }
@@ -85,7 +86,7 @@
 .hw-tag--faded,
 .hw-tag--stale,
 .hw-tag--expired {
-  color: #8a8073;
+  color: #5c5347;
   font-weight: 400;
   font-size: 17px;
 }
@@ -101,7 +102,7 @@
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: lowercase;
-  color: #8a8073;
+  color: #5c5347;
 }
 
 .hw-tag--rare .hw-tag__note {
@@ -147,7 +148,7 @@
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: lowercase;
-  color: #c4705a;
+  color: #5c5347;
 }
 
 .hw-note__text {
@@ -156,13 +157,14 @@
   line-height: 1.22;
 }
 
+/* the one coral word in the world: where you are */
 .hw-here {
   font-family: 'Cormorant SC', 'Cormorant Garamond', Georgia, serif;
   font-weight: 500;
   font-size: 13px;
   letter-spacing: 0.14em;
   text-transform: lowercase;
-  color: #c4705a;
+  color: #5c5347;
 }
 
 .hw-recentre {
@@ -174,7 +176,7 @@
   font-family: 'Cormorant SC', 'Cormorant Garamond', Georgia, serif;
   font-size: 13px;
   letter-spacing: 0.12em;
-  color: #8a8073;
+  color: #5c5347;
   cursor: pointer;
 }
 
@@ -203,6 +205,32 @@
 
 .hw-note__text--small {
   font-size: 15px;
-  color: #8a8073;
+  color: #5c5347;
   max-width: 190px;
+}
+
+.hw-here {
+  color: #5c5347;
+}
+
+.hw-tag--small {
+  font-size: 16px;
+}
+
+.hw-tag--plaza .hw-tag__note {
+  font-size: 13px;
+  max-width: 220px;
+  white-space: normal;
+  text-align: right;
+}
+
+/* compact windows: the scene's words step down with the page's type; nothing under 12px */
+@media (max-width: 1320px), (max-height: 800px) {
+  .hw-tag { font-size: 16px; }
+  .hw-tag--small { font-size: 14px; }
+  .hw-tag__note, .hw-note__caption, .hw-here { font-size: 12px; }
+  .hw-tag--plaza .hw-tag__note { font-size: 12px; max-width: 170px; }
+  .hw-note__text { font-size: 15px; }
+  .hw-tag__aside { font-size: 13px; }
+  .hw-note { max-width: 240px; }
 }

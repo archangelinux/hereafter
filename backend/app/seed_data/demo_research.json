@@ -64,6 +64,56 @@
      "retrieved_at": "2026-09-19",
      "snippet": "Full-time MMath students are entitled to 3.50 TA units over five terms.",
      "used_for": null
+    },
+    {
+     "claim": "At the University of Waterloo Cheriton School of Computer Science, MMath year-one domestic students admitted as of Fall 2026 and onwards receive $34,908 within 3 terms (1 year).",
+     "value": "34,908",
+     "unit": "within 3 terms (1 year)",
+     "source_title": "Funding and awards | Cheriton School of Computer Science | University of Waterloo",
+     "source_url": "https://cs.uwaterloo.ca/current-graduate-students/funding-and-awards",
+     "retrieved_at": "2026-09-19",
+     "snippet": "MMath\n\t\t\t(year one)\n\t\t\t\n\t\t\t$34,908 Domestic students\n\n\t\t\t$51,990 International students",
+     "used_for": null
+    },
+    {
+     "claim": "In Columbia, Waterloo near University Ave. & King St., the current rent for a furnished room in a shared 5-bedroom suite is CAD 700 per month.",
+     "value": "700",
+     "unit": "CAD per room per month",
+     "source_title": "All-Inclusive Furnished Student Living – 334 King St. N., Wate | Long Term Rentals | Kitchener / Waterloo | Free local classifieds - Kijiji",
+     "source_url": "https://www.kijiji.ca/v-apartments-condos/kitchener-waterloo/all-inclusive-furnished-student-living-334-king-st-n-wate/1741594975",
+     "retrieved_at": "2026-09-19",
+     "snippet": "$700.00Furnished 5 Bedrooms Suite at University Ave. & King St. for renColumbia, Waterloo•< 1km• 2 hrRent: $700 per room, included water and internet. Shared electricity/heat. This spacious 5-bedroom, 2-bathroom suite is located in an 8-year-old modern building, just a short walk to the University ...52Condo11900 sqft52Condo11900 sqft",
+     "used_for": null
+    },
+    {
+     "claim": "At the University of Waterloo Cheriton School of Computer Science, MMath year-one international students admitted as of Fall 2026 and onwards receive $51,990 within 3 terms (1 year).",
+     "value": "51,990",
+     "unit": "within 3 terms (1 year)",
+     "source_title": "Funding and awards | Cheriton School of Computer Science | University of Waterloo",
+     "source_url": "https://cs.uwaterloo.ca/current-graduate-students/funding-and-awards",
+     "retrieved_at": "2026-09-19",
+     "snippet": "MMath\n\t\t\t(year one)\n\t\t\t\n\t\t\t$34,908 Domestic students\n\n\t\t\t$51,990 International students",
+     "used_for": null
+    },
+    {
+     "claim": "For international students starting Fall 2026 at the University of Waterloo, the MMath in Computer Science would use the Graduate Master's Research full-time tuition assessed per term unless otherwise listed.",
+     "value": "7,696",
+     "unit": "CAD per term",
+     "source_title": "Master's and PhD program tuition Fall 2026 - International Students | Finance | University of Waterloo",
+     "source_url": "https://uwaterloo.ca/finance/masters-and-phd-program-tuition-fall-2026-international-0",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Most\t\t\tGraduate Master's Research\t\t\t$7,696.00\t\t\t$1,014.11\t\t\t$836.00\t\t\t$3,848.00\t\t\t$693.99",
+     "used_for": null
+    },
+    {
+     "claim": "In Kitchener / Waterloo near 20 University, the current advertised rent for a new-build 2026 1-bedroom-plus-den apartment is CAD 1,652 per month.",
+     "value": "1,652",
+     "unit": "CAD per month",
+     "source_title": "All-Inclusive Furnished Student Living – 334 King St. N., Wate | Long Term Rentals | Kitchener / Waterloo | Free local classifieds - Kijiji",
+     "source_url": "https://www.kijiji.ca/v-apartments-condos/kitchener-waterloo/all-inclusive-furnished-student-living-334-king-st-n-wate/1741594975",
+     "retrieved_at": "2026-09-19",
+     "snippet": "$1,652.0020 University - New Build 2026 - 1 Bed + Den, 1 BathKitchener / Waterloo•< 1km• 2 hrNew Limited Time Lower Pricing* *Advertised pricing reflects: 12-Month lease term Promotional discounts applied to 11 monthly rent payments 2% discount (already applied, with prompt payment) Last ...1.51Apartment0700 sqftYes1.51Apartment0700 sqftYesAdditional Options Online Application",
+     "used_for": null
     }
    ]
   },
@@ -126,6 +176,26 @@
      "retrieved_at": "2026-09-19",
      "snippet": "As of July 2025, the median rent for a one-bedroom apartment in San Francisco is $3,019.",
      "used_for": null
+    },
+    {
+     "claim": "In San Francisco in September 2026, the typical monthly rent for a one-bedroom apartment is $3,881.",
+     "value": "3,881",
+     "unit": "USD month",
+     "source_title": "San Francisco, CA Rent Report | Apartment List",
+     "source_url": "https://www.apartmentlist.com/rent-report/ca/san-francisco",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Citywide, the median rent currently stands at $3,881 for a 1-bedroom apartment and $4,599 for a 2-bedroom.",
+     "used_for": null
+    },
+    {
+     "claim": "The median sale price of a home in San Francisco over the three months ending August 2026 was $1,591,447.",
+     "value": "1,591,447",
+     "unit": "USD home sale price",
+     "source_title": "2026 San Francisco Housing Market: House Prices & Trends as of August | Redfin",
+     "source_url": "https://www.redfin.com/city/17151/CA/San-Francisco/housing-market",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Median Sale Price$1,591,447+13.7% year-over-year",
+     "used_for": "how hard buying a home is here, relative to the national picture behind the ownership table"
     }
    ]
   },
@@ -152,6 +222,42 @@
     }
    ],
    "facts": []
+  },
+  "demo-offer|Take the Toronto job": {
+   "params": {},
+   "rates": [],
+   "facts": [
+    {
+     "claim": "Between January 1 and August 31, 2025, one-bedroom condo apartments in Toronto leased for an average of $2,259 per month.",
+     "value": "2,259",
+     "unit": "CAD per month",
+     "source_title": "Toronto Rental Market Report – Fall 2025 Insights",
+     "source_url": "https://landlord.net/market-updates/toronto-rental-market-report-fall-2025-insights/",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Between January 1st and August 31st, 2025, one-bedroom condo apartments in Toronto leased for an average of $2,259 per month, per The Habistat’s market data.",
+     "used_for": null
+    },
+    {
+     "claim": "The average base pay for a Software Engineer in Toronto, ON is C$97,000 per year.",
+     "value": "97,000",
+     "unit": "CAD per year",
+     "source_title": "Salary: Software Engineer in Toronto, ON 2026 | Glassdoor",
+     "source_url": "https://www.glassdoor.ca/Salaries/toronto-software-engineer-salary-SRCH_IL.0,7_IC2281069_KO8,25.htm",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Base pay$77K - $122K/yr$97K/yrAverage base pay",
+     "used_for": null
+    },
+    {
+     "claim": "The estimated total pay for a Software Engineer in Toronto, ON is C$108,672 per year following the average career path.",
+     "value": "108,672",
+     "unit": "CAD per year",
+     "source_title": "Salary: Software Engineer in Toronto, ON 2026 | Glassdoor",
+     "source_url": "https://www.glassdoor.ca/Salaries/toronto-software-engineer-salary-SRCH_IL.0,7_IC2281069_KO8,25.htm",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Software Engineer professionals in Toronto, ON have a wide total pay range, between $64,832 and $206,485 depending on experience, with an estimated total pay of $108,672 following the average career path of a Software Engineer.",
+     "used_for": null
+    }
+   ]
   }
  },
  "note": "Real research, run on the date given, through Browserbase; every rate here passed the figure-in-snippet check and is re-checked when the demo is seeded. One result of the first run was removed by hand: a habitual-sleep figure that was a wrong stand-in for one night out."

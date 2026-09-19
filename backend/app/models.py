@@ -25,6 +25,7 @@ class LifeEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     confidence: float = 1.0
     text: str = ""
+    origin: str = ""  # which offering it came from (an upload's name, a URL, "your words"); lets a source be forgotten
 
 
 class StateVector(BaseModel):
@@ -71,8 +72,13 @@ class Scenario(BaseModel):
     situation: str
     created_at: str
     horizon: Horizon = Field(default_factory=Horizon)
+    scale: Literal["big", "small"] = "small"  # big = a life decision; small = a day-to-day action or dilemma
+    scale_chosen: bool = False  # the person set the scale themselves: never re-inferred afterwards
     questions: list[Question] = Field(default_factory=list)
     assuming_branch_id: Optional[str] = None
+    assuming_at: Optional[str] = None      # the date on that branch this decision splits off at
+    fork_at: Optional[str] = None          # where to draw its node: on the assumed path at this date (null = at now, on main)
+    assumed_facts: list[str] = Field(default_factory=list)  # what had already happened on that path by then
     nearest_deadline: Optional[str] = None
     options: list[Option]
     branch_ids: list[str] = Field(default_factory=list)
@@ -111,6 +117,7 @@ class Branch(BaseModel):
     horizon: int = 40
     span: Horizon = Field(default_factory=Horizon)        # how far, and in what steps, this branch is lived
     model: Optional[dict[str, Any]] = Field(default_factory=lambda: {"events": []})  # what could happen here; null while forming
+    measures: Optional[dict[str, Any]] = None  # health, joy, fulfilment, money: change from now, per step and at the end
     forming: bool = False  # true until the first simulation lands (and again while answers are being folded in)
 
 
@@ -118,6 +125,7 @@ class AspectOutlook(BaseModel):
     share: float
     words: str
     value: str
+    probability: float = 0.0  # cumulative by this step (for background aspects: the share with the value shown)
 
 
 class BranchYear(BaseModel):
@@ -168,6 +176,7 @@ class Chapter(BaseModel):
     from_at: str = ""
     to_at: str = ""
     which: Literal["typical", "rare"] = "typical"
+    recap: str = ""  # two sentences on where things stand at the end, handed to the next chapter
     title: str
     status: Literal["writing", "ready"]
     paragraphs: list[Paragraph]
@@ -196,6 +205,7 @@ class Person(BaseModel):
     birth_year: Optional[int] = None
     sex: Optional[Literal["M", "F"]] = None
     personality: Optional[dict[str, Any]] = None
+    money: Optional[dict[str, Any]] = None  # {income, net_worth, currency}: only what the person chose to say; encrypted at rest
 
 
 class Decision(BaseModel):
@@ -227,6 +237,9 @@ class PersonRequest(BaseModel):
     display_name: Optional[str] = None
     birth_year: Optional[int] = None
     sex: Optional[Literal["M", "F"]] = None
+    income: Optional[float] = None
+    net_worth: Optional[float] = None
+    currency: Optional[str] = None
 
 
 class OptionRequest(BaseModel):
@@ -237,10 +250,23 @@ class OptionRequest(BaseModel):
 
 class ScenarioRequest(BaseModel):
     person_id: str
-    situation: str
-    options: list[OptionRequest] = Field(min_length=2, max_length=4)
+    # Either `text` — one plain line, as the person would write a ticket; the options are found
+    # inside it — or `situation` with explicit `options`.
+    text: Optional[str] = None
+    situation: str = ""
+    options: list[OptionRequest] = Field(default_factory=list, max_length=4)
     horizon: Optional[Horizon] = None
+    scale: Optional[Literal["big", "small"]] = None
     assuming_branch_id: Optional[str] = None
+    assuming_at: Optional[str] = None
+
+
+class EditRequest(BaseModel):
+    situation: Optional[str] = None
+    scale: Optional[Literal["big", "small"]] = None
+    rename: dict[str, str] = Field(default_factory=dict)              # option id -> new title
+    deadline: dict[str, Optional[str]] = Field(default_factory=dict)  # option id -> YYYY-MM-DD, or null to clear
+    add: list[OptionRequest] = Field(default_factory=list)
 
 
 class AnswersRequest(BaseModel):
@@ -248,7 +274,8 @@ class AnswersRequest(BaseModel):
 
 
 class CommitRequest(BaseModel):
-    message: str
+    message: str = ""
+    event_key: Optional[str] = None  # instead of a message: "assume this possibility happens"
     at: Optional[str] = None
     year: Optional[int] = None
 
@@ -260,6 +287,11 @@ class UndoRequest(BaseModel):
 class EraseRequest(BaseModel):
     person_id: str
     confirm: str
+
+
+class ForgetRequest(BaseModel):
+    person_id: str
+    origin: str
 
 
 class CarryRequest(BaseModel):

@@ -5,7 +5,8 @@
 // Below now the scale is years. Above now it adapts to the focused scenario's horizon (a night,
 // weeks, months, decades), and each step keeps a minimum length so "tonight" is never a speck.
 
-import { yearOf } from '../format'
+import { scaleOf } from '../derive'
+import { belongsOnLine, isByYear, stepDate, yearOf } from '../format'
 import type { Basis, BranchView, BranchYear, Horizon, LifeEvent, Scenario } from '../types'
 
 export const PAST_PX_PER_YEAR = 58
@@ -14,7 +15,6 @@ const MIN_STEP_PX = 30
 const MIN_BRANCH_PX = 64 // a small decision is still a visible flourish
 const CLOSED_PX = 460 // how much of a road not taken stays drawn
 const STALE_PX = 84
-const LOOP_PX = 64
 const OFFSCREEN_PX = 1700 // other scenarios are not drawn beyond this above now
 
 export interface Pt {
@@ -39,10 +39,13 @@ export interface LaneNode {
   caption: string
   basis: Basis
   event?: LifeEvent
+  /** step zero: the choice itself, which is what a merge records */
+  head?: boolean
 }
 
 export interface Lane {
   view: BranchView
+  scale: 'big' | 'small'
   focus: boolean
   side: 1 | -1
   forkY: number
@@ -56,7 +59,7 @@ export interface Lane {
   endNormal: Pt
   /** position at s: 0 is the fork, i + 1 is the end of step i */
   pos: (s: number) => Pt
-  /** the lane's x at a given height, so a decision made inside this life can fork from it */
+  /** the lane's x at a given height, so a decision branched off this path can fork from it */
   xAtY: (y: number) => number
 }
 
@@ -97,6 +100,10 @@ export interface LineLayout {
   yAt: (t: number) => number
   focusHorizon: Horizon | null
   projected: string | null
+  /** one per decision: a large node on main for a life decision, a small one for a day-to-day choice */
+  forks: { x: number; y: number; scale: 'big' | 'small'; id: string; collapsed: boolean; label: string }[]
+  /** spans where a merged life decision turned main itself aside: [from y, to y] */
+  turns: [number, number][]
 }
 
 export function layoutLine(opts: { now: string; events: LifeEvent[]; views: BranchView[]; scenarios: Scenario[]; focusId: string | null; width: number }): LineLayout {
@@ -117,11 +124,15 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
   const gap = Math.max(92, Math.min(164, (opts.width * 0.6) / (rightCount + 0.5)))
 
   const lanes: Lane[] = []
+  const forks: LineLayout['forks'] = []
+  const turns: [number, number][] = []
   let leftCount = 0
   let projected: string | null = null
 
   for (const scenario of scenarios) {
     const isFocus = scenario === focus
+    const scale = scaleOf(scenario)
+    const small = scale === 'small'
     const anyOpen = scenario.branch_ids.some((id) => byId.get(id)?.branch.status === 'open')
     let rightLane = 0
     scenario.branch_ids.forEach((id, i) => {
@@ -132,11 +143,12 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
       const isContext = id === contextId
       const parent = scenario.assuming_branch_id ? (lanes.find((l) => l.view.branch.id === scenario.assuming_branch_id) ?? null) : null
       const side: 1 | -1 = parent ? parent.side : isFocus || isContext ? 1 : -1
-      const laneX = merged ? 0 : parent ? ++rightLane * (isFocus ? gap * 0.82 : 40) * side : isFocus || isContext ? ++rightLane * gap : -(1 + (leftCount++ % 4)) * 58
+      const laneX = merged ? 0 : parent ? ++rightLane * (isFocus ? gap * 0.82 : 40) * side : isFocus || isContext ? ++rightLane * gap * (small ? 0.62 : 1) : -(1 + (leftCount++ % 4)) * (small ? 34 : 64)
       const fork = Math.min(yearOf(view.branch.forked_at), now)
       // inside another life: leave from a little way up that branch, not from main
       const from = parent ? parent.pos(Math.min(parent.endS, 0.9)) : null
       const forkY = from ? from.y : yAt(fork)
+      if (!forks.some((f) => f.id === scenario.id)) forks.push({ id: scenario.id, x: from ? from.x : 0, y: forkY, scale, collapsed: false, label: scenario.situation })
 
       // knots: the fork, then the end of each step, each at least MIN_STEP_PX beyond the last
       const knots = [forkY]
@@ -159,21 +171,22 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
       let rejoinS: number | null = null
       if (merged) {
         const decision = opts.events.find((e) => e.event_type === 'decision' && e.payload?.from_branch === id)
-        const loop = Math.max(LOOP_PX, decision ? forkY - yAt(yearOf(decision.date)) : 0)
-        rejoinS = Math.min(total, sWhere(loop))
+        const loop = Math.max(small ? 40 : 110, decision ? forkY - yAt(yearOf(decision.date)) : 0)
+        rejoinS = Math.min(total, Math.max(0.35, sWhere(loop) * 0.25)) // only the first step, the choice, is drawn as main
         const continues = isFocus && !anyOpen
         if (continues) projected = id
-        endS = continues ? total : rejoinS
-      } else if (status === 'stale') endS = sWhere(STALE_PX)
-      else if (status === 'faded') endS = sWhere(CLOSED_PX)
+        endS = continues ? total : Math.min(total, sWhere(small ? 44 : 120))
+        // a life decision turns main itself along the chosen lane; a small one is only a handle on it
+      } else if (status === 'stale') endS = sWhere(small ? 36 : STALE_PX)
+      else if (status === 'faded') endS = sWhere(small ? 44 : CLOSED_PX)
       if (!isFocus) endS = Math.min(endS, sWhere(Math.max(MIN_BRANCH_PX, forkY + OFFSCREEN_PX)))
 
       const phase = (i + 1) * 1.7 + (isFocus ? 0 : 2.3)
-      const loopPx = rejoinS !== null ? forkY - yOfS(rejoinS) : 0
       const pos = (s: number): Pt => {
         const y = yOfS(s)
         const d = forkY - y
-        if (merged) return { x: d < loopPx ? side * 50 * Math.sin((Math.PI * d) / loopPx) ** 1.3 : 0, y }
+        // merged: the choice itself is on main, so the path runs straight on from it, as a projection
+        if (merged) return { x: 0, y }
         const meander = Math.sin(d / 120 + phase) * 9 * smooth(d / 260)
         const base = parent ? parent.xAtY(y) : 0
         return { x: base + laneX * smooth(d / (isFocus || isContext ? 150 : 90)) + meander, y }
@@ -195,23 +208,24 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
         return { index, solidity: certain ? 1 : step.solidity, hidden: index >= endS, d: pathThrough(sample(pos, index, index >= endS ? index + 1 : to)) }
       })
 
+      const byYear = isByYear(view.years)
       const nodes: LaneNode[] = []
       view.years.forEach((step, index) => {
         step.events.forEach((e, n) => {
           const s = index + (0.35 + (0.5 * (n + 1)) / (step.events.length + 1))
           if (s > endS) return
-          nodes.push({ id: e.id, kind: 'event', step: index, at: pos(s), normal: normalAt(pos, s), label: e.text, caption: step.label, basis: basisOf(e), event: e })
+          nodes.push({ id: e.id, kind: 'event', step: index, at: pos(s), normal: normalAt(pos, s), label: e.text, caption: stepDate(step.at, byYear), basis: basisOf(e), event: e, head: !!(e.head ?? e.payload?.head) })
         })
       })
       for (const c of view.branch.commits) {
         const index = Math.max(0, view.years.findIndex((y) => y.at >= c.at || y.year >= c.year))
         const s = index + 0.12
-        if (s <= endS) nodes.push({ id: c.id, kind: 'commit', step: index, at: pos(s), normal: normalAt(pos, s), label: c.message, caption: view.years[index].label, basis: 'background' })
+        if (s <= endS) nodes.push({ id: c.id, kind: 'commit', step: index, at: pos(s), normal: normalAt(pos, s), label: c.message, caption: stepDate(view.years[index].at, byYear), basis: 'background' })
       }
 
       const labelS = merged ? (rejoinS ?? 1) / 2 : Math.min(endS - 0.1, sWhere(isFocus ? 150 + rightLane * 58 : 40))
       lanes.push({
-        view, focus: isFocus, side, forkY, endS, rejoinS, segments, nodes, pos, xAtY,
+        view, scale, focus: isFocus, side, forkY, endS, rejoinS, segments, nodes, pos, xAtY,
         hit: pathThrough(sample(pos, 0, endS)),
         labelAt: pos(Math.max(0.2, labelS)),
         endAt: pos(endS),
@@ -220,9 +234,18 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
     })
   }
 
-  const firstEvent = opts.events.length ? Math.min(...opts.events.map((e) => yearOf(e.date))) : now - 4
+  // every decision not in focus is a single circle on main, at the day it was made
+  for (const scenario of scenarios) {
+    if (forks.some((f) => f.id === scenario.id)) continue
+    let y = yAt(Math.min(yearOf(scenario.created_at), now))
+    while (forks.some((f) => f.x === 0 && Math.abs(f.y - y) < 18)) y += 18
+    forks.push({ id: scenario.id, x: 0, y, scale: scaleOf(scenario), collapsed: true, label: scenario.situation })
+  }
+
+  const dated = opts.events.filter(belongsOnLine)
+  const firstEvent = dated.length ? Math.min(...dated.map((e) => yearOf(e.date))) : now - 4
   const top = Math.min(-600, ...lanes.map((l) => l.endAt.y))
-  return { lanes, now, pastFrom: Math.min(firstEvent, now - 3) - 0.6, top, gap, yAt, focusHorizon: focus?.horizon ?? null, projected }
+  return { lanes, now, pastFrom: Math.min(firstEvent, now - 3) - 0.6, top, gap, yAt, focusHorizon: focus?.horizon ?? null, projected, forks, turns }
 }
 
 /** The rarest life here: the faintest offshoot from its branch, drawn beside it. */
@@ -233,11 +256,12 @@ export function layoutRare(lane: Lane, years: BranchYear[]): RareLane {
     return { x: p.x + lane.side * (52 * smooth(d / 120) + Math.sin(d / 47) * 6), y: p.y }
   }
   const total = Math.min(years.length, lane.endS)
+  const byYear = isByYear(years)
   const nodes: LaneNode[] = []
   years.slice(0, Math.ceil(total)).forEach((step, index) =>
     step.events.forEach((e, n) => {
       const s = index + (0.35 + (0.5 * (n + 1)) / (step.events.length + 1))
-      nodes.push({ id: e.id, kind: 'event', step: index, at: pos(s), normal: normalAt(pos, s), label: e.text, caption: step.label, basis: basisOf(e), event: e })
+      nodes.push({ id: e.id, kind: 'event', step: index, at: pos(s), normal: normalAt(pos, s), label: e.text, caption: stepDate(step.at, byYear), basis: basisOf(e), event: e })
     }),
   )
   return { d: pathThrough(sample(pos, 0.25, total)), nodes, labelAt: pos(Math.min(total, 2.6)) }

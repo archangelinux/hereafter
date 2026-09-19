@@ -19,11 +19,15 @@ from .store import get_store
 def main() -> None:
     store = get_store()
     seed.ensure_demo(store)
-    out: dict = {"researched_on": date.today().isoformat(), "branches": {}}
+    # Merge into what is already stored: earlier, hand-reviewed results are kept; this run only adds.
+    out: dict = json.loads(seed.SEED_DATA.read_text()) if seed.SEED_DATA.exists() else {"branches": {}}
+    out["researched_on"] = date.today().isoformat()
     for branch, _ in db.list_branches(seed.DEMO_ID):  # let research replace the seeded placeholder if it can
         if branch.params.pop("housing_cost_ratio", None):
             db.save_branch(branch)
     for scenario in db.list_scenarios(seed.DEMO_ID):
+        if scenario.status != "open":
+            continue
         research.research_scenario(scenario)
         for branch, _ in db.list_branches(seed.DEMO_ID):
             if branch.scenario_id != scenario.id:
@@ -43,8 +47,16 @@ def main() -> None:
                     facts.append({k: getattr(ev, k) for k in ("claim", "value", "unit", "source_title", "source_url",
                                                               "retrieved_at", "snippet", "used_for")})
             researched = {k: v for k, v in branch.params.items() if k in ("housing_cost_ratio",) and any(f["used_for"] for f in facts)}
-            out["branches"][f"{scenario.id}|{branch.label}"] = {"params": researched, "rates": rates, "facts": facts}
-            print(scenario.id, "|", branch.label, "|", len(rates), "published rates,", len(facts), "facts, params", researched)
+            kept = out["branches"].setdefault(f"{scenario.id}|{branch.label}", {"params": {}, "rates": [], "facts": []})
+            new_rates = [r for r in rates if r["event_key"] not in {k["event_key"] for k in kept["rates"]}]
+            new_facts = [f for f in facts if (f["source_url"], f["claim"]) not in {(k["source_url"], k["claim"]) for k in kept["facts"]}]
+            kept["rates"] += new_rates
+            kept["facts"] += new_facts
+            kept["params"] = {**researched, **kept["params"]}
+            print(scenario.id, "|", branch.label, "| new:", len(new_rates), "rates,", len(new_facts), "facts | total:",
+                  len(kept["rates"]), "rates,", len(kept["facts"]), "facts")
+            for r in new_rates:
+                print("    NEW RATE", r["event_key"], r["figure"], r["source_url"], "|", r["claim"][:110], "| gap:", (r["gap"] or "")[:90])
     seed.SEED_DATA.parent.mkdir(exist_ok=True)
     seed.SEED_DATA.write_text(json.dumps(out, indent=1, ensure_ascii=False))
 

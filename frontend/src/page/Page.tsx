@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Api } from '../api'
 import { likelihoodWords, stateWords } from '../derive'
-import { dayLabel, deadlineOf, sentence } from '../format'
+import { dayLabel, deadlineOf, isByYear, sentence, stepDate } from '../format'
 import { basisOf } from '../line/layout'
 import { theme } from '../theme'
 import type { Basis, BranchView, BranchYear, LivesResponse, Scenario, Which } from '../types'
@@ -43,6 +43,8 @@ export function Page(p: Props) {
   const { chapters, loading, loadNext, done, key } = useChapters(api, view, which, years)
 
   const long = (p.scenario?.horizon.unit ?? 'years') === 'years'
+  const byYear = isByYear(years)
+  const when = (y: BranchYear) => stepDate(y.at, byYear)
   const open = branch.status === 'open'
   const closed = branch.status === 'faded' || branch.status === 'stale'
 
@@ -115,7 +117,7 @@ export function Page(p: Props) {
 
         {which === 'rare' && p.rare && (
           <p className="page__rare">
-            You have stepped sideways. {p.rare.rarity_words} Nothing in it is impossible.
+            {p.rare.rarity_words}
           </p>
         )}
         {p.error && <p className="page__error">{p.error}</p>}
@@ -124,13 +126,13 @@ export function Page(p: Props) {
 
       {chapters.map((c) => {
         const steps = stepsOf(c, years)
-        const span = steps.length ? (steps.length === 1 ? steps[0].y.label : `${steps[0].y.label} to ${steps[steps.length - 1].y.label}`) : ''
+        const span = steps.length ? (steps.length === 1 ? when(steps[0].y) : `${when(steps[0].y)} to ${when(steps[steps.length - 1].y)}`) : ''
         return (
           <article key={c.from_at} className={`chapter ${c.status === 'writing' ? 'chapter--writing' : ''} ${/^[\p{L}“"]/u.test(c.paragraphs[0]?.text ?? '') ? 'chapter--prose' : ''}`}>
             <header>
               <p className="caps chapter__span">{span}</p>
               <h2 className="chapter__title">{c.title}</h2>
-              {c.status === 'writing' && <p className="chapter__writing">This stretch is still being written. What follows is what the simulation settled.</p>}
+              {c.status === 'writing' && <p className="chapter__writing">Being written…</p>}
             </header>
             <div className="chapter__body">
               <div className="chapter__prose">
@@ -150,7 +152,7 @@ export function Page(p: Props) {
               <aside className="chapter__margin" aria-label="what the simulation settled in this stretch">
                 {steps.map(({ y, i }) => (
                   <div key={y.at} className="step" data-step={i}>
-                    <p className="caps step__label">{y.label}</p>
+                    <p className="caps step__label">{when(y)}</p>
                     {y.events.length === 0 && <p className="step__quiet">nothing marked</p>}
                     {y.events.map((e) => {
                       const basis: Basis = basisOf(e)
@@ -184,14 +186,14 @@ export function Page(p: Props) {
                     <p className="step__actions">
                       <button type="button" className="quiet" onClick={() => p.onEvidence([], y)}>how the thousand lives spread</button>
                       {open && which === 'typical' && (
-                        <button type="button" className="quiet" onClick={() => (setCommitAt(y.at), setMessage(''))}>commit a change here</button>
+                        <button type="button" className="quiet" onClick={() => (setCommitAt(y.at), setMessage(''))}>commit a step here</button>
                       )}
                     </p>
                     {commitAt === y.at && (
                       <form className="commit" onSubmit={submitCommit}>
-                        <label className="caps" htmlFor={`commit-${i}`}>{y.label}: what do you do differently?</label>
+                        <label className="caps" htmlFor={`commit-${i}`}>{when(y)}: step</label>
                         <input id={`commit-${i}`} autoFocus value={message} onChange={(e) => setMessage(e.target.value)} placeholder="I say no to the second date" />
-                        <p className="commit__note">Everything after this is simulated again. A commit is only a what-if; undo takes it back completely.</p>
+                        <p className="commit__note">Adds one step to this path. You can undo it.</p>
                         <div>
                           <button type="submit" className="verb" disabled={p.busy === 'commit' || !message.trim()}>{p.busy === 'commit' ? 'redrawing what follows' : 'commit'}</button>
                           <button type="button" className="quiet" onClick={() => setCommitAt(null)}>never mind</button>
