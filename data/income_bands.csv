@@ -1,0 +1,6 @@
+band,lo,hi
+low,0,19900
+lower_middle,19900,33100
+middle,33100,50000
+upper_middle,50000,77000
+high,77000,1e12

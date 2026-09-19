@@ -1,0 +1,283 @@
+{
+ "situation": "Should I text my ex tonight, or leave it?",
+ "unit": "days",
+ "steps": 7,
+ "options": {
+  "text_them": [
+   {
+    "key": "they_read_it_tonight",
+    "label": "they read it tonight",
+    "domain": "love",
+    "kind": "one_time",
+    "window": [
+     0,
+     0
+    ],
+    "bin": "usually",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "usually",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "they_reply_within_a_day",
+    "label": "they reply within a day",
+    "domain": "love",
+    "kind": "one_time",
+    "window": [
+     0,
+     1
+    ],
+    "bin": "as often as not",
+    "probability": 0.44,
+    "basis": "sourced",
+    "evidence_id": "ev_fixture",
+    "words": "as often as not",
+    "depends_on": [
+     {
+      "key": "they_read_it_tonight",
+      "relation": "requires"
+     }
+    ],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "sleep_under_five_hours",
+    "label": "you sleep under five hours",
+    "domain": "body",
+    "kind": "one_time",
+    "window": [
+     0,
+     0
+    ],
+    "bin": "as often as not",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "as often as not",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "regret_next_morning",
+    "label": "you wake up wishing you had not sent it",
+    "domain": "mind",
+    "kind": "one_time",
+    "window": [
+     1,
+     1
+    ],
+    "bin": "as often as not",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "as often as not",
+    "depends_on": [
+     {
+      "key": "they_reply_within_a_day",
+      "relation": "less_likely"
+     }
+    ],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "you_meet_for_coffee",
+    "label": "you meet for coffee before the week is out",
+    "domain": "love",
+    "kind": "one_time",
+    "window": [
+     2,
+     6
+    ],
+    "bin": "sometimes",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "sometimes",
+    "depends_on": [
+     {
+      "key": "they_reply_within_a_day",
+      "relation": "requires"
+     }
+    ],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "check_phone_constantly",
+    "label": "you check your phone more than you would like",
+    "domain": "mind",
+    "kind": "recurring",
+    "window": [
+     0,
+     3
+    ],
+    "bin": "usually",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "usually",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "tell_a_friend",
+    "label": "you tell a friend what you did",
+    "domain": "friends",
+    "kind": "one_time",
+    "window": [
+     1,
+     4
+    ],
+    "bin": "usually",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "usually",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "back_together",
+    "label": "it starts again",
+    "domain": "love",
+    "kind": "state",
+    "window": [
+     3,
+     6
+    ],
+    "bin": "rare",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "rare",
+    "depends_on": [
+     {
+      "key": "you_meet_for_coffee",
+      "relation": "requires"
+     }
+    ],
+    "question": null,
+    "search_query": null
+   }
+  ],
+  "leave_it": [
+   {
+    "key": "sleep_under_five_hours",
+    "label": "you sleep under five hours",
+    "domain": "body",
+    "kind": "one_time",
+    "window": [
+     0,
+     0
+    ],
+    "bin": "sometimes",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "sometimes",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "regret_next_morning",
+    "label": "you wake up wishing you had sent it",
+    "domain": "mind",
+    "kind": "one_time",
+    "window": [
+     1,
+     1
+    ],
+    "bin": "sometimes",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "sometimes",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "draft_and_delete",
+    "label": "you write the message and delete it",
+    "domain": "mind",
+    "kind": "recurring",
+    "window": [
+     0,
+     2
+    ],
+    "bin": "as often as not",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "as often as not",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "they_text_first",
+    "label": "they text you first",
+    "domain": "love",
+    "kind": "one_time",
+    "window": [
+     0,
+     6
+    ],
+    "bin": "rare",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "rare",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "tell_a_friend",
+    "label": "you tell a friend you almost did",
+    "domain": "friends",
+    "kind": "one_time",
+    "window": [
+     1,
+     4
+    ],
+    "bin": "as often as not",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "as often as not",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   },
+   {
+    "key": "good_week",
+    "label": "by the weekend you have stopped thinking about it",
+    "domain": "mind",
+    "kind": "state",
+    "window": [
+     4,
+     6
+    ],
+    "bin": "as often as not",
+    "probability": null,
+    "basis": "estimated",
+    "evidence_id": null,
+    "words": "as often as not",
+    "depends_on": [],
+    "question": null,
+    "search_query": null
+   }
+  ]
+ }
+}

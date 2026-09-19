@@ -1,0 +1,8 @@
+.env
+backend/.venv/
+backend/hereafter.db
+backend/cache/
+__pycache__/
+.pytest_cache/
+node_modules/
+frontend/dist/

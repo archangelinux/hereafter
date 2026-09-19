@@ -1,0 +1,158 @@
+{
+ "researched_on": "2026-09-19",
+ "branches": {
+  "demo-offer|Stay for the master's": {
+   "params": {},
+   "rates": [],
+   "facts": [
+    {
+     "claim": "At University of Waterloo in Spring 2025 for Domestic Ontario students, full-time Computer Science - MMath incidental fees are 665.52 CAD per term.",
+     "value": "666",
+     "unit": "CAD per term",
+     "source_title": "Master's program tuition Spring 2025 - Domestic Ontario Students | Finance | University of Waterloo",
+     "source_url": "https://uwaterloo.ca/finance/masters-program-tuition-spring-2025-domestic-ontario",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Computer Science - MMath\n\t\t\tMaster's, Research\n\t\t\tOn-campus\n\t\t\t$2,254.00\n\t\t\t$665.52\n\t\t\t$1,127.00\n\t\t\t$355.43",
+     "used_for": null
+    },
+    {
+     "claim": "At the University of Waterloo, Graduate Teaching Assistantships are paid CAD 8,020.80 per term effective May 1, 2025 for a full 160-hour appointment.",
+     "value": "8,021",
+     "unit": "CAD per term",
+     "source_title": "Graduate Teaching Assistantships (GTA) and Graduate Research Assistantships (GRA) | Current Graduate Students | University of Waterloo",
+     "source_url": "https://uwaterloo.ca/current-graduate-students/awards-and-funding/teaching-assistantships-ta-and-research-assistantships-ra",
+     "retrieved_at": "2026-09-19",
+     "snippet": "May 1, 2025\n\t\t\t$8,020.80\n\t\t\t$2,005.20\n\t\t\t$50.13",
+     "used_for": null
+    },
+    {
+     "claim": "At the University of Waterloo, Graduate Teaching Assistantships are paid CAD 2,005.20 per month effective May 1, 2025 for 10 hours/week over 4 weeks.",
+     "value": "2,005",
+     "unit": "CAD per month",
+     "source_title": "Graduate Teaching Assistantships (GTA) and Graduate Research Assistantships (GRA) | Current Graduate Students | University of Waterloo",
+     "source_url": "https://uwaterloo.ca/current-graduate-students/awards-and-funding/teaching-assistantships-ta-and-research-assistantships-ra",
+     "retrieved_at": "2026-09-19",
+     "snippet": "May 1, 2025\n\t\t\t$8,020.80\n\t\t\t$2,005.20\n\t\t\t$50.13",
+     "used_for": null
+    },
+    {
+     "claim": "The monthly rent for the private room in a shared apartment on Seagram Drive in Waterloo, near the University of Waterloo, for May 1 to August 26, 2025 is $700 per month.",
+     "value": "700",
+     "unit": "CAD per month",
+     "source_title": "Furnished room in an apartment | Seagram Drive, Waterl... – Roomies.ca",
+     "source_url": "https://www.roomies.ca/rooms/702342",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Rent\n    $700 per month",
+     "used_for": null
+    },
+    {
+     "claim": "At University of Waterloo in Spring 2025 for Domestic Ontario students, full-time Computer Science - MMath tuition is 2254 CAD per term.",
+     "value": "2,254",
+     "unit": "CAD per term",
+     "source_title": "Master's program tuition Spring 2025 - Domestic Ontario Students | Finance | University of Waterloo",
+     "source_url": "https://uwaterloo.ca/finance/masters-program-tuition-spring-2025-domestic-ontario",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Computer Science - MMath\n\t\t\tMaster's, Research\n\t\t\tOn-campus\n\t\t\t$2,254.00\n\t\t\t$665.52\n\t\t\t$1,127.00\n\t\t\t$355.43",
+     "used_for": null
+    },
+    {
+     "claim": "At the University of Waterloo School of Computer Science, full-time MMath students are entitled to 3.50 teaching assistant units over five terms.",
+     "value": "4",
+     "unit": "TA units",
+     "source_title": "Teaching assistantships | Cheriton School of Computer Science | University of Waterloo",
+     "source_url": "https://uwaterloo.ca/computer-science/current-graduate-students/teaching-assistantships",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Full-time MMath students are entitled to 3.50 TA units over five terms.",
+     "used_for": null
+    }
+   ]
+  },
+  "demo-offer|Take the offer": {
+   "params": {
+    "housing_cost_ratio": 2.96
+   },
+   "rates": [
+    {
+     "event_key": "on_call_burnout",
+     "claim": "The figure measures the share of engineers in Yerbo's 2024 State of Engineering Burnout survey reporting at least one MBI dimension above clinical threshold, with no duration stated.",
+     "figure": "53%",
+     "span_days": null,
+     "snippet": "53%of engineers report at least one MBI dimension above clinical threshold in Yerbo's 2024 State of Engineering Burnout (n≈2,200).",
+     "gap": "This is a survey prevalence rate for engineers meeting at least one burnout dimension, not specifically people recovering for months after a long on-call stretch.",
+     "gap_is_large": true,
+     "reference_class": "burnout prevalence among software engineers",
+     "source_title": "Engineering Burnout & Process Debt 2026 · Stride Research",
+     "source_url": "https://www.stride.page/research/engineering-burnout-and-process-debt-2026",
+     "retrieved_at": "2026-09-19"
+    }
+   ],
+   "facts": [
+    {
+     "claim": "In San Francisco, effective January 1, 2025, the Adult “M” Monthly Pass for Muni costs 85.00 per month.",
+     "value": "85",
+     "unit": "USD monthly pass",
+     "source_title": "Muni Fare Changes Effective January 1, 2025 | SFMTA",
+     "source_url": "https://www.sfmta.com/notices/muni-fare-changes-effective-january-1-2025",
+     "retrieved_at": "2026-09-19",
+     "snippet": "$85.00  \n \nAdult “M” Monthly Pass  (Clipper)",
+     "used_for": null
+    },
+    {
+     "claim": "In San Francisco, effective January 1, 2025, the Adult “A” Monthly Pass with BART within San Francisco costs 102.00 per month.",
+     "value": "102",
+     "unit": "USD monthly pass",
+     "source_title": "Muni Fare Changes Effective January 1, 2025 | SFMTA",
+     "source_url": "https://www.sfmta.com/notices/muni-fare-changes-effective-january-1-2025",
+     "retrieved_at": "2026-09-19",
+     "snippet": "$102.00  \n \nAdult “A” Monthly Pass + BART within SF (Clipper )",
+     "used_for": null
+    },
+    {
+     "claim": "The median home sale price in San Francisco from January through November 2025 was $1,513,742.",
+     "value": "1,513,742",
+     "unit": "USD",
+     "source_title": "San Francisco's 2025 housing market year in review - Stacker Stories",
+     "source_url": "https://stacker.com/stories/california/san-francisco/san-franciscos-2025-housing-market-year-review",
+     "retrieved_at": "2026-09-19",
+     "snippet": "Median sale price: $1,513,742",
+     "used_for": "how hard buying a home is here, relative to the national picture behind the ownership table"
+    },
+    {
+     "claim": "In San Francisco as of July 2025, the median rent for a one-bedroom apartment is $3,019 per month.",
+     "value": "3,019",
+     "unit": "USD per month",
+     "source_title": "Is San Francisco Affordable for Renters? [2025]",
+     "source_url": "https://www.apartmentlist.com/renter-life/how-much-is-rent-in-san-francisco",
+     "retrieved_at": "2026-09-19",
+     "snippet": "As of July 2025, the median rent for a one-bedroom apartment in San Francisco is $3,019.",
+     "used_for": null
+    }
+   ]
+  },
+  "demo-tonight|Go to the housewarming": {
+   "params": {},
+   "rates": [],
+   "facts": []
+  },
+  "demo-tonight|Stay in and finish the problem set": {
+   "params": {},
+   "rates": [
+    {
+     "event_key": "watch_the_stories",
+     "claim": "This figure measures moderate fear of missing out among University of Cape Coast respondents in Ghana in a cross-sectional survey with no stated time period.",
+     "figure": "46.2%",
+     "span_days": null,
+     "snippet": "The study's findings showed that among university students, FOMO was prevalent at moderate (46.2%) and low levels (53.8%).",
+     "gap": "The study population is university students in Ghana and the outcome is a moderate FOMO score, not specifically a person watching a party happen on their phone.",
+     "gap_is_large": true,
+     "reference_class": "fear of missing out among university students on social media",
+     "source_title": "Prevalence and Predictors of Fear of Missing Out among University Students",
+     "source_url": "https://doi.org/10.5281/zenodo.20508071",
+     "retrieved_at": "2026-09-19"
+    }
+   ],
+   "facts": []
+  }
+ },
+ "note": "Real research, run on the date given, through Browserbase; every rate here passed the figure-in-snippet check and is re-checked when the demo is seeded. One result of the first run was removed by hand: a habitual-sleep figure that was a wrong stand-in for one night out."
+}

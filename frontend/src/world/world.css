@@ -1,0 +1,208 @@
+/* The world's own few pieces of HTML: names at the far ends of ribbons, notes on landmarks, the
+   figure's place. Self-contained (prefixed hw-), so it sits beside whatever the page styles. */
+
+.hw-world {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.hw-world:active {
+  cursor: grabbing;
+}
+
+.hw-note,
+.hw-here {
+  font-family: 'Cormorant Garamond', 'Cormorant', Georgia, serif;
+  color: #5c5347;
+  white-space: nowrap;
+  text-shadow:
+    0 0 8px #fdf6ec,
+    0 0 3px #fdf6ec,
+    0 0 1px #fdf6ec;
+}
+
+.hw-labels {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.hw-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 500ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
+}
+
+.hw-label.is-shown {
+  opacity: 1;
+}
+
+.hw-label--button.is-shown {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.hw-tag {
+  display: flex;
+  flex-direction: column;
+  font-family: 'Cormorant Garamond', 'Cormorant', Georgia, serif;
+  font-style: italic;
+  font-weight: 500;
+  font-size: 19px;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: #5c5347;
+  text-shadow:
+    0 0 8px #fdf6ec,
+    0 0 3px #fdf6ec,
+    0 0 1px #fdf6ec;
+}
+
+.hw-tag--seed {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.hw-tag__aside {
+  font-size: 15px;
+  font-weight: 400;
+  color: #8a8073;
+  max-width: 200px;
+  white-space: normal;
+}
+
+.hw-tag--merged,
+.hw-tag--faded,
+.hw-tag--stale,
+.hw-tag--expired {
+  color: #8a8073;
+  font-weight: 400;
+  font-size: 17px;
+}
+
+.hw-tag--merged {
+  color: #5c5347;
+}
+
+.hw-tag__note {
+  font-family: 'Cormorant SC', 'Cormorant Garamond', Georgia, serif;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: #8a8073;
+}
+
+.hw-tag--rare .hw-tag__note {
+  color: #5c5347;
+}
+
+.hw-note {
+  display: flex;
+  flex-direction: column;
+  max-width: 300px;
+  white-space: normal;
+  width: max-content;
+  padding: 8px 14px 9px;
+  background: #fffdf8;
+  border: 1px solid #d9cdbb;
+  border-radius: 14px 18px 15px 20px / 17px 14px 19px 15px;
+  box-shadow:
+    0 1px 2px rgb(92 83 71 / 0.05),
+    0 8px 20px rgb(92 83 71 / 0.06);
+  text-shadow: none;
+  transform: translate(10px, -100%);
+  animation: hw-rise 520ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.hw-note--left {
+  transform: translate(calc(-100% - 10px), -100%);
+}
+
+.hw-note--seed {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  text-align: right;
+  text-shadow:
+    0 0 8px #fdf6ec,
+    0 0 3px #fdf6ec;
+}
+
+.hw-note__caption {
+  font-family: 'Cormorant SC', 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: #c4705a;
+}
+
+.hw-note__text {
+  font-style: italic;
+  font-size: 17px;
+  line-height: 1.22;
+}
+
+.hw-here {
+  font-family: 'Cormorant SC', 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+  color: #c4705a;
+}
+
+.hw-recentre {
+  all: unset;
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  font-family: 'Cormorant SC', 'Cormorant Garamond', Georgia, serif;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  color: #8a8073;
+  cursor: pointer;
+}
+
+.hw-recentre:empty {
+  display: none;
+}
+
+@keyframes hw-rise {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hw-tag,
+  .hw-note {
+    transition: none;
+    animation: none;
+  }
+}
+
+.hw-note__text--small {
+  font-size: 15px;
+  color: #8a8073;
+  max-width: 190px;
+}
