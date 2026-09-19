@@ -20,7 +20,7 @@ from datetime import date, datetime
 from hashlib import sha1
 from typing import Optional
 
-from . import branches, config, db, llm, outcome_model
+from . import branches, config, db, llm, outcome_model, probability
 from .ingest import links
 from .models import Evidence, ResearchStep, Scenario
 from .store import get_store
@@ -278,6 +278,8 @@ def research_scenario(scenario: Scenario, only: Optional[list[str]] = None) -> N
                 before = dict(branch.params)
                 mine = [l for l in leads if l.branch_id == bid]
                 sourced, changed = _apply_rates(branch, [l for l in mine if l.parameter == "event"])
+                if changed:  # an estimated event now has a published base rate: recombine with Jev's scores
+                    probability.assess_events(branch.model.get("events", []))
                 get_store().add_evidence(_apply(branch, [l for l in mine if l.parameter != "event"]) + sourced)
                 branch.research = "done"
                 priced = any(e.get("effects_basis") == "sourced" for e in branch.model.get("events", []))

@@ -6,6 +6,10 @@ no LLM, no network, deterministic from its inputs. A stored model re-runs identi
 
 Where an event's likelihood comes from is recorded on the event (`basis`):
   sourced    a published figure found by research and verified in code -> a fixed probability
+  estimate   (any basis) the probability logic has combined the base rate with the person's context; each
+             life draws around its likelihood, spread by its stated uncertainty
+  estimate   (any basis) the probability logic has combined the base rate with the person's context; each
+             life draws around its likelihood, spread by its stated uncertainty (see `base_of`)
   estimated  no published figure: only a verbal bin is known; each simulated life draws its own
              probability uniformly inside the bin's range, so the uncertainty is carried, not hidden
   background the life-course engine (engine.py), merged in by the caller on long horizons
@@ -175,7 +179,13 @@ def personality_shift(event: dict, personality: dict | None) -> tuple[float, lis
 
 
 def base_of(event: dict, widen: float = 0.0) -> tuple[float, tuple[float, float] | None]:
-    """(central base probability, the range each life draws it from or None for a point)."""
+    """(central base probability, the range each life draws it from or None for a point). When the
+    probability logic has combined the base rate with the person's context (probability.py), that
+    estimate is the base: its likelihood, spread by its own stated uncertainty."""
+    estimate = event.get("estimate")
+    if estimate:
+        p, half = float(estimate["likelihood"]), float(estimate["spread"]) + widen
+        return p, ((max(0.005, p - half), min(0.995, p + half)) if half else None)
     if event.get("basis") in ("sourced", "personal") and event.get("base_probability") is not None:
         p = float(event["base_probability"])
         half = float(event.get("band") or 0.0) + widen
@@ -187,7 +197,9 @@ def base_of(event: dict, widen: float = 0.0) -> tuple[float, tuple[float, float]
 
 def seed_for(person_id: str, events: list[dict], n_steps: int, runs: int, patches: list[dict]) -> int:
     fields = ("key", "kind", "window", "base_probability", "band", "bin", "basis", "depends_on", "terms", "after", "requires", "head")
-    core = sorted(({k: e.get(k) for k in fields} for e in events), key=lambda e: e["key"])
+    core = sorted(({k: e.get(k) for k in fields}
+                   | ({"estimate": [e["estimate"]["likelihood"], e["estimate"]["spread"]]} if e.get("estimate") else {})
+                   for e in events), key=lambda e: e["key"])
     blob = json.dumps([person_id, core, n_steps, runs, patches], sort_keys=True, default=str)
     return int.from_bytes(hashlib.sha256(blob.encode()).digest()[:8], "big")
 
@@ -355,21 +367,27 @@ def describe(events: list[dict], result: OutcomeResult, personality: dict | None
                               "simulated_note": "the first step of every simulated life on this path"}
             continue
         centre, band = base_of(e, widen)
+        estimate = e.get("estimate")
+        raw_centre, raw_band = base_of({**e, "estimate": None}, widen) if estimate else (centre, band)  # before Jev
         shift, items = personality_shift(e, personality)
         adjusted = float(logistic(logit(min(max(centre, 0.005), 0.995)) + shift)) if shift else centre
         per = "in any one step" if e.get("kind") == "recurring" else "within its window"
         note = {
             "sourced": f"a published figure for the nearest studied group, converted to the chance {per}"
-                       + ("; drawn from a band around it because that group fits loosely" if band else ""),
+                       + ("; drawn from a band around it because that group fits loosely" if raw_band else ""),
             "personal": f"your own track record of kept commitments, as the chance {per}",
         }.get(e.get("basis"), f"no published figure was found: “{e.get('bin') or DEFAULT_BIN}” means this range, and each "
                               f"simulated life draws its own value inside it (the chance {per})")
         simulated = round(float(final.get(e["key"], 0.0)), 4)
         e["probability"] = simulated
         e["breakdown"] = {
-            "base": {"kind": e.get("basis", "estimated"), "value": round(centre, 4),
-                     "range": [round(band[0], 4), round(band[1], 4)] if band else None,
+            "base": {"kind": e.get("basis", "estimated"), "value": round(raw_centre, 4),
+                     "range": [round(raw_band[0], 4), round(raw_band[1], 4)] if raw_band else None,
                      "evidence_id": e.get("evidence_id"), "reference_class": e.get("reference_class"), "note": note},
+            "judged": ({"category": estimate["category"], "shift_logodds": estimate["shift"], "value": round(centre, 4),
+                        "range": [round(band[0], 4), round(band[1], 4)] if band else None, "confidence": estimate["confidence"],
+                        "difficulty": estimate["difficulty"], "difficulty_label": estimate["difficulty_label"],
+                        "blocked": estimate["blocked"], "evidence": estimate["evidence"]} if estimate else None),
             "personality": items,
             "dependencies": [{"on": d["key"], "label": labels.get(d["key"], d["key"]), "relation": d.get("relation", "likelier"),
                               "multiplier": RELATION_MULTIPLIER.get(d.get("relation", "likelier"), 1.0),

@@ -1,7 +1,8 @@
-"""The only three things the LLM is allowed to do: extract structure from messy input (pages,
+"""The only things the LLM is allowed to do: extract structure from messy input (pages,
 the person's own words, their options and what-ifs), pick what to look up (Elastic queries,
-research questions), and narrate a life that the simulator already decided.
-It never sees a request to invent, choose, or weigh a future. Every function here returns
+research questions), narrate a life that the simulator already decided, and (Jev) classify and
+score proposed events against the person's own record.
+It never sees a request to invent, choose, or weigh a future, and never supplies a probability. Every function here returns
 None on any failure (or when HEREAFTER_LLM=off) and callers carry on without it.
 """
 
@@ -664,6 +665,76 @@ quoting or pointing at what you relied on, or "nothing in their log or words" if
 def extract_life_script(situation: str, known: str) -> Optional[LifeScript]:
     return _parse(LIFE_SCRIPT_SYSTEM, f"Their words:\n{situation}\n\nFrom their log:\n{known or '(nothing)'}", LifeScript, max_tokens=1500)
 
+
+# --- Jev: judging what was proposed (classify, score, check prerequisites — never a probability) ---
+
+CATEGORY = Literal["career", "education", "research", "entrepreneurship", "financial", "social", "location",
+                   "health", "relationship", "other"]
+
+
+class Prerequisite(BaseModel):
+    requirement: str
+    met: Literal["yes", "no", "unknown"]
+    basis: str
+
+
+class JudgedEvent(BaseModel):
+    key: str
+    category: CATEGORY
+    personal_fit: int
+    experience_fit: int
+    difficulty: int
+    accessibility: int
+    evidence_strength: int
+    prerequisites: list[Prerequisite]
+    rationale: str
+
+
+class Judgement(BaseModel):
+    events: list[JudgedEvent]
+
+
+JEV_SYSTEM = """You are Jev, the judge in a life-decision simulator. Other parts of the system \
+have already proposed possible events for one option of a decision the person is weighing. You do \
+not generate events and you do NOT estimate how likely any event is: a separate probability model \
+does that. You classify and score each event you are given, using only the person's own record \
+and the evidence provided.
+
+For every event, return:
+- `category`: the one outcome type it belongs to (career, education, research, entrepreneurship, \
+financial, social, location, health, relationship, other).
+- Five integer scores from 1 to 5 (3 = cannot tell / typical):
+  `personal_fit`: how well this outcome matches what the person has said they want, value, or \
+tend to do.
+  `experience_fit`: how well their skills, education and past work match what the outcome asks of them.
+  `difficulty`: how hard the outcome is for a typical person in that situation, whatever the \
+person's own strengths (5 = very selective or demanding).
+  `accessibility`: how open the route is to THIS person right now (cost, location, eligibility, \
+time, who they know) (5 = wide open).
+  `evidence_strength`: how strongly the evidence provided (their record, and any published \
+figure listed under the event) bears on this specific outcome (1 = nothing relevant, 5 = direct \
+and specific).
+- `prerequisites`: only HARD requirements that must hold for the outcome to be possible at all \
+(a degree, a citizenship or visa, a minimum grade, a licence, a minimum age) — not preferences. \
+For each, `met` is "yes" only if the person's record shows it, "no" only if the record shows \
+they do not meet it, otherwise "unknown". `basis` is one short phrase pointing at what you relied on. \
+Return an empty list when there are none.
+- `rationale`: one plain sentence on the scores.
+
+Rules. Judge only from what is given: silence in the record means 3 for the two fit scores and \
+"unknown" for prerequisites, never a guess in either direction. Never invent facts about the \
+person. Never output a probability, percentage or likelihood in any field. Return exactly one entry \
+for every event key you are given, using the same key."""
+
+
+def judge_events(about: str, record: str, option: str, events: list[dict]) -> Optional[Judgement]:
+    listed = "\n".join(
+        f"- key={e['key']} | {e['label']} | area: {e['domain']} | reference class: {e.get('reference_class') or 'none'}"
+        f" | basis so far: {e['basis']}" for e in events)
+    user = (f"About the person (background only): {about}\n\nThe option being judged: {option}\n\n"
+            f"Their own record, retrieved for this option:\n{record or '(nothing relevant found)'}\n\n"
+            f"Events to judge:\n{listed}")
+    return _parse(JEV_SYSTEM, user, Judgement, max_tokens=8000, fast=True)
 
 # --- reading a one-line decision ---
 

@@ -216,6 +216,24 @@ citation only (the paper is paywalled) — noted in the code.
 
 ---
 
+### 2.10 Jev judges, our own arithmetic decides how likely — *built*
+**Decision.** After the LLM proposes an option's possible events, a fourth LLM job — **Jev** — classifies
+each one (career, education, research, entrepreneurship, financial, social, location, health, relationship,
+other) and scores it 1–5 for personal fit, experience fit, difficulty, accessibility and evidence strength,
+and answers yes / no / unknown to each *hard* prerequisite, all read against the person's own log from
+Elastic. It returns no probability. `probability.py`, plain code that cannot import the LLM (tested), takes
+the event's base rate (2.3), moves it on the log-odds scale by a bounded amount weighted by category, caps it at
+3 % if a hard prerequisite is shown unmet, and returns likelihood, range, difficulty, confidence and the
+evidence lines. The sampler runs on that likelihood.
+**Why.** "Get into a competitive program" and "you finish the degree" call for different judgements of what
+counts, and a published rate says nothing about *this* person. But letting a model's 1–5 opinion become the
+probability would break 2.1. Bounding the shift means a published figure is adjusted, never replaced, and the
+audit trail (`probability`, `basis`, `evidence_id`) is never overwritten.
+**Rejected.** Averaging Jev's scores straight into the probability (unbounded, unauditable); asking Jev for
+"a percentage, but only as a sanity check" (the number would leak into the result).
+**Limits.** Jev scores once, before research lands; when research turns an estimate into a sourced figure the
+estimate is recombined from the stored scores, not re-judged. The constants are hand-set (`data/SOURCES.md`).
+
 ## 3. Data, privacy, security
 
 ### 3.1 One ingestion path for everything — *built*

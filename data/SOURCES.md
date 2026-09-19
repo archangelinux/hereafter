@@ -349,3 +349,19 @@ Rules rather than constants: published shares are converted to an event's window
 and parses as a percentage, "X in Y" or "X per Y"; marriage, divorce, widowhood, births and home purchase are simulated
 only when the person's own log or words show they are wanted or already theirs; the life-course runs only on year
 horizons and may supply at most about a quarter of a branch's visible events, giving way to the option's own events.
+
+## Model assumptions added with Jev and the probability logic
+
+Declared in `backend/app/probability.py` and `backend/app/jev.py`. Hand-set, not published statistics.
+
+| Constant | Value | What it does |
+|---|---|---|
+| `MAX_SHIFT` | sourced 0.6 · personal 0.3 · estimated 0.9 (log-odds) | The most Jev's fit and difficulty scores can move an event's base rate. 0.9 is at most about ×2.5 on the odds, so five perfect scores turn a 6 % outcome into about 14 %, never into a likely one. A published figure moves least; a bare estimate moves most. |
+| `CATEGORY_WEIGHTS` | one row per category, each summing to 1 | How much personal fit, experience fit, accessibility and (inversely) difficulty count for that kind of outcome: experience matters most for career and research, personal fit for social and relationship, accessibility for financial and location. |
+| `HARD_CAP` | 0.03 | An outcome with a hard prerequisite that the person's own record shows is unmet. A prerequisite that is merely `unknown` never lowers the likelihood; it lowers confidence and widens the range. |
+| `BASIS_CONFIDENCE` | sourced 0.70 · personal 0.60 · estimated 0.30 | Starting confidence by where the base rate came from; Jev's evidence-strength score moves it by up to ±0.15, an unknown prerequisite subtracts 0.08 (max 2), a poorly fitting published figure subtracts 0.10. |
+| `UNCERTAINTY_SPREAD`, `UNKNOWN_PREREQ_SPREAD`, `MAX_SPREAD` | 0.12, 0.03, 0.40 | Half-width of the range each simulated life draws from: the base rate's own band, plus 0.12 × (1 − confidence), plus 0.03 per unknown prerequisite. |
+
+Rules rather than constants: Jev returns 1–5 scores and yes/no/unknown checks only, never a probability, and every
+score is clamped in code; the estimate is recomputed from the base rate each time, so the published figure and
+its evidence id are never overwritten; with the LLM off, Jev scores everything 3 and the estimate equals the base rate.

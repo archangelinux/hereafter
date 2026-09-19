@@ -439,6 +439,20 @@ def evidence_for(branch_id: Optional[str] = None, ids: Optional[str] = None, per
     return {"evidence": get_store().evidence(person.id, branch_id, wanted or None)}
 
 
+@app.get("/assessment")
+def assessment(branch_id: str, token: str = Depends(bearer)):
+    """Jev's classification and the probability logic's estimate for every possible event on a branch."""
+    _, branch, _ = owned_branch(token, branch_id)
+    events = (branch.model or {}).get("events", [])
+    rows = [{"key": e["key"], "label": e["label"], "estimate": e.get("estimate"), "jev": e.get("jev")} for e in events]
+    by_category: dict[str, int] = {}
+    for r in rows:
+        if r["estimate"]:
+            by_category[r["estimate"]["category"]] = by_category.get(r["estimate"]["category"], 0) + 1
+    return {"branch_id": branch_id, "categories": by_category,
+            "events": sorted(rows, key=lambda r: -(r["estimate"] or {}).get("likelihood", 0))}
+
+
 # --- merge (permanent) and pick ---
 
 
