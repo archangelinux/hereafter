@@ -313,14 +313,14 @@ export default function App() {
     try {
       let s = session
       if (!s) {
-        s = await api.createPerson({ display_name: draft.display_name || undefined, birth_year: draft.birth_year, income: draft.income, net_worth: draft.net_worth, currency: draft.currency })
+        s = await api.createPerson({})
         saveSession(s)
         setToken(s.token || null)
         setSession(s)
       }
       setIngested(await api.ingest({
-        person_id: s.person_id, display_name: draft.display_name || undefined, birth_year: draft.birth_year, text: draft.text || undefined,
-        handles: draft.handles, files: draft.files, income: draft.income, net_worth: draft.net_worth, currency: draft.currency, live_source: draft.handles.github ? 'github' : draft.handles.site ? 'site' : undefined,
+        person_id: s.person_id, text: draft.text || undefined,
+        files: draft.files, // draft.sources (the accounts chosen) is not sent yet: reading them comes with the Browserbase hookup
       }))
     } catch {
       setIngested('silent')

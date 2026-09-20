@@ -1,15 +1,13 @@
 import { useRef, useState, type DragEvent, type FormEvent } from 'react'
-import type { Handles, IngestResult } from '../types'
+import type { IngestResult } from '../types'
+import { Connect } from './Connect'
+import type { Platform } from './platforms'
 
 export interface OfferingDraft {
   text: string
   files: File[]
-  handles: Handles
-  display_name: string
-  birth_year?: number
-  income?: number
-  net_worth?: number
-  currency?: string
+  /** the accounts chosen to learn from; nothing is read from them yet */
+  sources: Platform[]
 }
 
 interface Props {
@@ -25,12 +23,7 @@ interface Props {
 export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }: Props) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
-  const [handles, setHandles] = useState<Handles>({})
-  const [name, setName] = useState('')
-  const [born, setBorn] = useState('')
-  const [income, setIncome] = useState('')
-  const [worth, setWorth] = useState('')
-  const [currency, setCurrency] = useState('CAD')
+  const [sources, setSources] = useState<Platform[]>([])
   const [over, setOver] = useState(false)
   const input = useRef<HTMLInputElement>(null)
 
@@ -41,9 +34,7 @@ export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }:
   }
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    const clean = Object.fromEntries(Object.entries(handles).filter(([, v]) => v?.trim())) as Handles
-    const n = (v: string) => (v.replace(/[^\d.]/g, '') ? Number(v.replace(/[^\d.]/g, '')) : undefined)
-    onSubmit({ text: text.trim(), files, handles: clean, display_name: name.trim(), birth_year: born ? Number(born) : undefined, income: n(income), net_worth: n(worth), currency: n(income) !== undefined || n(worth) !== undefined ? currency : undefined })
+    onSubmit({ text: text.trim(), files, sources })
   }
 
   if (result) {
@@ -79,8 +70,8 @@ export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }:
 
         <label className="setup__field">
           <span>About you</span>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3}
-            placeholder="Write or paste anything: where you are in life, what is on your mind. Links work too." />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={5}
+            placeholder="Write or paste anything: who you are, where you are in life, what is on your mind. Links work too." />
         </label>
 
         <div className="setup__field">
@@ -95,30 +86,7 @@ export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }:
           </div>
         </div>
 
-        <div className="setup__grid">
-          {([['github', 'GitHub', 'username'], ['linkedin', 'LinkedIn', 'username'], ['site', 'Website', 'yourname.com'], ['instagram', 'Instagram', 'username']] as const).map(([k, label, hint]) => (
-            <label key={k} className="setup__field">
-              <span>{label}</span>
-              <input value={handles[k] ?? ''} placeholder={hint} onChange={(e) => setHandles((h) => ({ ...h, [k]: e.target.value }))} spellCheck={false} autoCapitalize="off" />
-            </label>
-          ))}
-          <label className="setup__field">
-            <span>Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} />
-          </label>
-          <label className="setup__field">
-            <span>Birth year</span>
-            <input value={born} placeholder="2003" onChange={(e) => setBorn(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" />
-          </label>
-        </div>
-
-        <div className="setup__grid setup__grid--money">
-          <label className="setup__field"><span>Income a year (optional)</span><input value={income} onChange={(e) => setIncome(e.target.value)} inputMode="numeric" /></label>
-          <label className="setup__field"><span>Savings or net worth (optional)</span><input value={worth} onChange={(e) => setWorth(e.target.value)} inputMode="numeric" /></label>
-          <label className="setup__field"><span>Currency</span><input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase().slice(0, 3))} /></label>
-        </div>
-
-        <p className="setup__note">Only your own accounts. Files are read once and never stored.</p>
+        <Connect selected={sources} onChange={setSources} />
 
         <div className="setup__actions">
           <button type="submit" className="setup__primary" disabled={busy}>{busy ? 'Reading…' : 'Continue'}</button>

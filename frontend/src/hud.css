@@ -312,8 +312,6 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .h-tiny sub { font-size: 8px; font-weight: 500; color: var(--color-text-2); vertical-align: baseline; margin-left: 1px; }
 .h-effects { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .h-effects .h-chip { cursor: default; padding: 0 6px; }
-.setup__grid--money { grid-template-columns: 1fr 1fr 72px; }
-@media (max-width: 420px) { .setup__grid--money { grid-template-columns: 1fr; } }
 
 .h-heads__head:empty { display: none; }
 
