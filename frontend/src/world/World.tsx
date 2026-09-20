@@ -47,6 +47,8 @@ export interface WorldProps {
   onSeek: (branchId: string, step: number) => void
   onOpenLog: () => void
   safeInsets?: Partial<Insets>
+  /** the choice has been made: the ghost walks back out of the future and into the figure at now */
+  homing?: boolean
   onFocusScenario?: (scenarioId: string) => void
   onArrive?: (eventId: string, branchId: string) => void
   onWalking?: (moving: boolean) => void
@@ -69,7 +71,7 @@ interface View {
   k: number // zoom on top of the framing
 }
 
-export function World({ now, events, views, scenarios, activeId, hereStep, rare, onSwitch, onSeek, onOpenLog, safeInsets, onFocusScenario, onArrive, onWalking }: WorldProps) {
+export function World({ now, events, views, scenarios, activeId, hereStep, rare, onSwitch, onSeek, onOpenLog, safeInsets, homing = false, onFocusScenario, onArrive, onWalking }: WorldProps) {
   const still = useReducedMotion()
   const insets = useMemo<Insets>(() => ({ top: 24, right: 24, bottom: 24, left: 24, ...safeInsets }), [safeInsets?.top, safeInsets?.right, safeInsets?.bottom, safeInsets?.left]) // eslint-disable-line react-hooks/exhaustive-deps
   const [hoveredId, setHoveredId] = useState<string | null>(null)
@@ -122,13 +124,17 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
   // and nothing ever walks past it.
   // The figure stands on one of the path's own circles — the same places the reading stops at — and
   // the last of them is the end platform. The rarest life is read on the same circles.
-  const restAt = (lane: typeof active, step: number) => {
-    if (!lane || lane.rests.length === 0) return 0
+  // ONE circle is the answer to "where is the reader?" — the ghost stands on it and it is the one that
+  // lights up. Both come from here, so they can never point at different places: a step with nothing on
+  // it has no circle of its own, and resolves to the next circle ahead.
+  const restOn = (lane: typeof active, step: number) => {
+    if (!lane || lane.rests.length === 0) return null
     const last = rare ? Math.min(lane.rests.length, rare.length) : lane.rests.length
-    return (lane.rests.find((r) => r.step >= step) ?? lane.rests[last - 1] ?? lane.rests[lane.rests.length - 1]).d
+    return lane.rests.find((r) => r.step >= step) ?? lane.rests[last - 1] ?? lane.rests[lane.rests.length - 1]
   }
+  const here = restOn(active, hereStep ?? 0)
   const target = active
-    ? { lane: active, d: restAt(active, hereStep ?? 0), steps: hereStep === null ? 1 : jumped }
+    ? { lane: active, d: here?.d ?? 0, steps: hereStep === null ? 1 : jumped }
     : null
   // a branch that runs down the screen (a side-stream) wants the figure high in the frame, not low
   const downhill = useMemo(() => {
@@ -148,6 +154,13 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
     view.current = { x: 0, y: 0, k: 1 }
     setMoved(false)
   }, [activeId])
+
+  // When the choice is made the ghost has nowhere left to explore: it turns round, walks back down the
+  // branch to now, and steps into the figure standing there. Only once it has arrived does it stop being.
+  const [arrivedHome, setArrivedHome] = useState(false)
+  useEffect(() => {
+    setArrivedHome(false)
+  }, [activeId, homing])
 
   // names and captions live in one layer over the canvas, where they can be kept apart from each other and from the HUD
   const labels = useMemo<LabelSpec[]>(() => {
@@ -269,12 +282,21 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
         {/* circles only where a decision is made; drawn over the bands that meet there */}
         <Plazas plazas={layout.plazas} still={still} onHover={setHoveredPlaza} onPick={(p) => (onFocusScenario ? onFocusScenario(p.id) : p.branchIds[0] && onSwitch(p.branchIds[0]))} />
         <Ends lanes={layout.lanes} still={still} onHover={setHoveredId} onGo={onSeek} />
-        <Stops lanes={layout.lanes} still={still} activeId={activeId} hereStep={hereStep} onGo={onSeek} />
+        <Stops lanes={layout.lanes} still={still} activeId={activeId} hereStep={here ? here.step : null} onGo={onSeek} />
         {active && rare && <RareStrand lane={active} years={rare} still={still} />}
         {/* the real you: always at now, never in a future */}
         <Walker layout={layout} target={null} state={real} still />
-        {/* the ghost: the one that walks the futures */}
-        {active && <Walker layout={layout} target={target} state={walker} still={still} pale />}
+        {/* the ghost: the one that walks the futures, until the choice is made and it comes home */}
+        {active && !arrivedHome && (
+          <Walker
+            layout={layout}
+            target={homing ? null : target}
+            state={walker}
+            still={still}
+            pale
+            onRest={(laneId) => homing && laneId === null && setArrivedHome(true)}
+          />
+        )}
       </Canvas>
       <LabelLayer specs={labels} els={labelEls} />
 

@@ -12,8 +12,10 @@ import type {
   CarryResponse,
   Chapter,
   CompareResponse,
+  AuditResult,
   EraseResult,
   Evidence,
+  EvidenceHealth,
   Health,
   Horizon,
   IngestResult,
@@ -156,6 +158,10 @@ export interface Api {
   deleteScenario(scenarioId: string): Promise<{ deleted: { scenarios: number; branches: number } }>
   /** forget one offering: everything on main that came from it goes */
   forget(personId: string, origin: string): Promise<{ origin: string; removed: number }>
+  /** how fresh the shared evidence base is, per the scheduled audit on the cluster */
+  evidenceHealth(personId: string): Promise<EvidenceHealth>
+  /** run that audit now rather than waiting for the daily schedule */
+  auditEvidence(personId: string): Promise<AuditResult>
 }
 
 function liveApi(): Api {
@@ -305,6 +311,12 @@ function liveApi(): Api {
           stored_nowhere: ['Raw chat exports', 'Uploaded files', "Other people's names or messages"],
         }
       }),
+    evidenceHealth: (id) =>
+      orLocally('/evidence/health', () => read<EvidenceHealth>(`/evidence/health?person_id=${q(id)}`),
+        () => ({ available: false, reason: 'This backend has no evidence audit yet.' })),
+    auditEvidence: (id) =>
+      orLocally('POST /evidence/audit', () => post<AuditResult>(`/evidence/audit?person_id=${q(id)}`, {}, 180_000),
+        notYet('Auditing the evidence base')),
     forget: (person_id, origin) => orLocally('POST /forget', () => post('/forget', { person_id, origin }, 60_000), notYet('Forgetting one offering')),
     deleteScenario: (id) =>
       orLocally(

@@ -451,3 +451,22 @@ export interface TicketPatch {
   decide_by?: string | null
   scale?: 'big' | 'small'
 }
+
+/** The shared evidence base's freshness, as the scheduled audit workflow last left it. */
+export interface EvidenceHealth {
+  available: boolean
+  reason?: string
+  workflow?: string
+  registered?: boolean
+  max_age_days?: number
+  researched?: number
+  stale?: number
+  usable?: number
+  last_run?: { at?: string; stale?: number; fresh?: number; max_age_days?: number } | null
+}
+
+export interface AuditResult {
+  status: string
+  error?: string | null
+  health: EvidenceHealth
+}

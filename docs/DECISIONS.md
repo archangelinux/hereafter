@@ -350,6 +350,29 @@ opt out of). Letting the agent return the events themselves rather than replayin
 **Bonus, free.** The same five tools are served over Agent Builder's MCP endpoint, so an MCP
 client can ask the life log and the multiverse questions with no code from us.
 
+### 4.2c Evidence freshness is an Elastic Workflow — *built*
+**Decision.** A scheduled Workflow on the cluster marks researched evidence older than
+`HEREAFTER_EVIDENCE_MAX_AGE_DAYS` (180) as `stale`, clears the flag on anything fresh, and writes
+an audit document. `remembered()` excludes stale evidence, so an aged-out figure is researched
+again rather than reused. `GET /evidence/health` and `POST /evidence/audit` expose it; the UI
+shows it under "How these numbers are made".
+
+**Why it belongs on the cluster and not in a request.** The reuse gate (4.2a) judges whether two
+questions mean the same thing, which is a question about meaning and has no sense of time. A
+published figure is a fact about a moment. Nobody is holding a request open when a rent figure
+goes out of date, and the check is a set of Elasticsearch predicates over an Elasticsearch index —
+there is nothing for the application to contribute. Putting it in a request handler would mean it
+only ran when someone happened to be looking.
+
+**The honest shape of it.** The workflow writes to the evidence index and an audit index and
+nothing else. The life log stays append-only and no workflow touches it; the test suite asserts
+that against the rendered YAML rather than trusting the prose.
+
+**Rejected.** A trigger that calls back into the Hereafter API over HTTP to re-crawl immediately
+(the crawler is Browserbase inside the app, which a cloud workflow cannot reach during a demo, and
+it would put an outbound dependency in a scheduled job). Deleting stale evidence (it is still the
+best record of what was true then, and `used_for` on it explains numbers already in a path).
+
 ### 4.3 Composio — *not built*
 Passive calendar events onto main. First thing cut, per the original spec; "tell Hereafter
 something" covers it.

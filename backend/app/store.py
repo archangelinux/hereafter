@@ -73,6 +73,8 @@ class ElasticStore:
             "source_title": {"type": "text"}, "source_url": {"type": "keyword"},
             "used_for": {"type": "text"}, "question": {"type": "text", "copy_to": "claim_semantic"},
             "figure": {"type": "keyword", "index": False}, "span_days": {"type": "integer", "index": False},
+            # written by the evidence audit workflow (backend/app/workflows.py), not by the app
+            "stale": {"type": "boolean"}, "checked_at": {"type": "date"},
         }
     }
 
@@ -249,7 +251,14 @@ class ElasticStore:
     def remembered(self, question: str, size: int = 3) -> list[Evidence]:
         """Researched evidence from anyone's earlier research that may answer the same question.
         It is public fact, not personal data, so it is searched across people."""
+        # `stale: true` is set by the scheduled evidence audit once a figure is older than
+        # HEREAFTER_EVIDENCE_MAX_AGE_DAYS. Excluding it here is what turns that flag into
+        # behaviour: the question falls through to a fresh crawl instead of being answered
+        # from memory. Documents written before the first audit have no `stale` field at all,
+        # so the clause is must_not rather than a term filter on false.
         filt = [{"term": {"kind": "researched"}}, {"exists": {"field": "question"}}]
+        stale_filter = {"bool": {"must_not": [{"term": {"stale": True}}]}}
+        filt = [*filt, stale_filter]
         lexical = {"standard": {"query": {"bool": {"must": {"match": {"question": question}}, "filter": filt}}}}
         dense = {"standard": {"query": {"bool": {"must": {"semantic": {"field": "claim_semantic", "query": question}}, "filter": filt}}}}
         # Reranked on `question`: whether to reuse a figure turns on the two questions asking the

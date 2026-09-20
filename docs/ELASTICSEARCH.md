@@ -17,6 +17,7 @@ the same method surface is used when `ELASTICSEARCH_URL` is unset; the test suit
 | Agent Builder agent | Yes, server-side | Runs its own ES\|QL tools on the cluster, driven by `.anthropic-claude-5-sonnet-chat_completion` hosted on Elastic. `agent_builder.plan` reads its tool *calls* and discards its results; the queries are re-run through `store`. |
 | Elasticsearch itself | n/a | Calls the Jina inference endpoints at index time (`copy_to` → `semantic_text`) and at query time (`semantic` clause, `text_similarity_reranker`). |
 | `backend/scripts/*` | Yes | Setup and reindex only. |
+| The evidence audit workflow | Yes, server-side | Runs on a 24 h schedule with no application involved, updating `stale` on the evidence index. |
 
 ## Configuration
 
@@ -34,6 +35,7 @@ the same method surface is used when `ELASTICSEARCH_URL` is unset; the test suit
 | `HEREAFTER_REUSE_THRESHOLD` | `0.2` | Rerank score above which stored research is reused instead of re-crawled. |
 | `HEREAFTER_STATE_PLANNER` | `llm` | `elastic` \| `llm` \| `rules`. Who chooses the state-building queries. |
 | `HEREAFTER_STATE_PLANNER_TIMEOUT` | `120` | Seconds for the Agent Builder converse call. |
+| `HEREAFTER_EVIDENCE_MAX_AGE_DAYS` | `180` | Age past which the audit workflow marks a researched figure stale. |
 
 Client: `elasticsearch` 9.x, `request_timeout=60`, `retry_on_timeout`, `max_retries=2`. Bulk
 writes use `request_timeout=300`. Indices are created on first start if missing. `GET /health`
@@ -234,12 +236,88 @@ curl -s -X POST -H "Authorization: ApiKey $ELASTICSEARCH_API_KEY" -H "kbn-xsrf: 
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
+## Workflows — the evidence audit
+
+The reuse gate above decides whether two questions mean the same thing. It has no sense of time,
+so on its own it will hand back a rent figure from two years ago as confidently as one from
+yesterday. Freshness is not a request-time question — nobody is looking when a figure goes out of
+date — so it runs on the cluster.
+
+[`backend/app/workflows.py`](../backend/app/workflows.py) renders the definition;
+[`backend/scripts/workflow_setup.py`](../backend/scripts/workflow_setup.py) registers it.
+
+```
+name: hereafter-evidence-audit
+triggers: manual, scheduled every 24h
+steps:
+  mark_stale   elasticsearch.request  POST /hereafter-evidence-v2/_update_by_query?conflicts=proceed&refresh=true
+                                      kind:researched AND retrieved_at < now-{MAX_AGE}d
+                                      painless: ctx._source.stale = true
+  mark_fresh   elasticsearch.request  the same, retrieved_at >= now-{MAX_AGE}d, stale = false
+  write_audit  elasticsearch.request  POST /hereafter-workflow-runs/_doc  (counts from both steps)
+```
+
+`HEREAFTER_EVIDENCE_MAX_AGE_DAYS` (default 180) is baked into the YAML at registration rather
+than passed as a trigger input, so a scheduled run and a manual run can never disagree about the
+threshold. Re-register to change it.
+
+**What makes the flag mean something.** `remembered()` filters `stale: true` out of recall
+(`must_not`, so documents written before the first audit still match). A figure that has aged out
+is therefore never offered from memory, and the next path that needs it researches it again.
+The workflow writes only to the evidence and audit indices — the life log is append-only and no
+workflow touches it, which `tests/test_workflows.py` asserts against the rendered YAML.
+
+**Audit output**, one document per run in `hereafter-workflow-runs`:
+
+```json
+{"workflow": "hereafter-evidence-audit", "at": "2026-09-20T08:53:19Z",
+ "execution": "f7431ad1-…", "max_age_days": 180, "stale": 0, "fresh": 38}
+```
+
+`at` comes from an ingest pipeline (`hereafter-workflow-audit`, a `set` processor reading
+`{{{_ingest.timestamp}}}`) because the workflow templating renders `execution.startedAt` as a
+JavaScript date string that Elasticsearch will not parse.
+
+### Endpoints
+
+| Route | What |
+|---|---|
+| `GET /evidence/health` | Live counts (`researched`, `usable`, `stale`) plus the last audit document. Owner token required, though the numbers are not per-person: the evidence base is shared. |
+| `POST /evidence/audit` | Runs the workflow now instead of waiting for the schedule. Returns the execution status and fresh counts. |
+
+The UI shows this under **How these numbers are made** as "How fresh the evidence is", with a
+*check now* button that triggers a real execution on the cluster.
+
+### Two things worth knowing about the API
+
+- **Creating does not replace.** `POST /api/workflows` with a name that already exists produces a
+  second workflow with a suffixed id (`-1`, `-2`, …), and the counter keeps climbing even after
+  the earlier copies are deleted. So registration sweeps every workflow carrying the name first,
+  and `run()` resolves the id by name each time rather than assuming it equals the name.
+- **Deletion is a bulk call.** `DELETE /api/workflows` with `{"ids": [...]}`; there is no
+  per-id route (`DELETE /api/workflows/<id>` is a 404).
+- Query-string options belong in the step's `path`. Passing `conflicts`/`refresh` as a `params`
+  block left the request running with the defaults, and every matching document raised a version
+  conflict.
+
+### Try it
+
+```bash
+cd backend
+.venv/bin/python -m scripts.workflow_setup --run
+
+# watch it actually do something: age everything out, then put it back
+HEREAFTER_EVIDENCE_MAX_AGE_DAYS=0 .venv/bin/python -m scripts.workflow_setup --run
+.venv/bin/python -m scripts.workflow_setup --run
+```
+
 ## Current state of the cluster
 
 ```
 hereafter-life-events-v2      634 docs
-hereafter-evidence-v2         136 docs
+hereafter-evidence-v2         136 docs   (38 researched, 0 stale)
 hereafter-runs            444,037 docs
+hereafter-workflow-runs         1 doc    per audit run
 ```
 
 Verified against the live cluster:

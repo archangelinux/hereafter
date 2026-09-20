@@ -23,7 +23,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import ticket, branches as branch_ops
-from . import config, db, llm, model_card, research, security
+from . import config, db, llm, model_card, research, security, workflows
 from . import scenarios as scenarios_ops
 from .ingest import links, pipeline
 from .models import (AnswersRequest, EditRequest, Branch, BranchView, CommitRequest, EraseRequest, ForgetRequest, LifeEvent, MergeRequest,
@@ -286,6 +286,32 @@ def delete_scenario(scenario_id: str, token: str = Depends(bearer)):
     for key in [k for k in state_module._cache if k[0] == person.id]:
         state_module._cache.pop(key, None)
     return {"deleted": gone}
+
+
+@app.get("/evidence/health")
+def evidence_health(person_id: str, token: str = Depends(bearer)):
+    """What the shared evidence base looks like, and what the audit workflow last found.
+
+    The evidence base is public research shared across everyone, so the numbers are not scoped
+    to a person; the token is checked so this is not an open endpoint."""
+    owner(token, person_id)
+    return workflows.health()
+
+
+@app.post("/evidence/audit")
+def evidence_audit(person_id: str, token: str = Depends(bearer)):
+    """Run the audit now instead of waiting for the daily schedule. The workflow runs on the
+    cluster; this only asks it to start and reports what came back."""
+    owner(token, person_id)
+    if not config.ES_URL:
+        raise HTTPException(400, "The evidence audit needs Elasticsearch; the local store has no workflows.")
+    try:
+        execution = workflows.run()
+    except Exception as exc:
+        raise HTTPException(502, f"The audit workflow did not run: {exc}") from exc
+    return {"status": execution.get("status"), "started_at": execution.get("started_at"),
+            "finished_at": execution.get("finished_at"), "error": execution.get("error_message"),
+            "health": workflows.health()}
 
 
 @app.get("/research")

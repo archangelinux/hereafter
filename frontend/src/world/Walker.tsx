@@ -108,7 +108,11 @@ export function Walker({ layout, target, state, still, onRest, pale = false }: P
       // mid-walk simply bends the same motion toward it; an earlier one turns it round to walk back.
       const goal = s.laneId === wantLane ? wantD : 0
       const gap = goal - s.d
-      const key = `${wantLane}:${wantD.toFixed(3)}`
+      // The pace is settled once per LEG, and stepping onto a path begins a new one: crossing to a branch
+      // and then walking out along it are two legs, so which path it is on belongs in the key. Without it
+      // the pace was fixed back at the fork — where there is no ground to cover, so the pace came out as
+      // nothing — and the walk out along the branch then never began at all.
+      const key = `${s.laneId}>${wantLane}:${wantD.toFixed(3)}`
       if (key !== lastTarget.current) {
         lastTarget.current = key
         const hops = Math.max(1, s.laneId === wantLane ? (target?.steps ?? 1) : 3)
@@ -116,7 +120,8 @@ export function Walker({ layout, target, state, still, onRest, pale = false }: P
         // long one look like the same walk; the floor and ceiling keep a hair's-breadth step from crawling
         // and a long one from sprinting. Several steps at once go quicker each, never rushed.
         const shuffle = Math.min(1.7, Math.abs(gap) / 0.3) // a step of almost nothing is a shuffle, not a twitch
-        cruise.current = Math.min(5, Math.max(shuffle, Math.abs(gap) / (0.7 + 0.35 * (hops - 1))))
+        // and never nothing: a pace of zero is a figure that can never set off
+        cruise.current = Math.min(5, Math.max(0.4, shuffle, Math.abs(gap) / (0.7 + 0.35 * (hops - 1))))
       }
       if (Math.abs(gap) > 0.004 || Math.abs(vel.current) > 0.02) {
         const accel = cruise.current / 0.45

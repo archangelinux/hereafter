@@ -319,6 +319,12 @@ export function createFixture(): Api {
       for (let i = scenarios.length - 1; i >= 0; i--) if (gone.has(scenarios[i].id)) scenarios.splice(i, 1)
       return { deleted: { scenarios: gone.size, branches } }
     },
+    async evidenceHealth() {
+      return { available: false, reason: 'The offline sandbox has no cluster to audit.' }
+    },
+    async auditEvidence(): Promise<never> {
+      throw new Error('The evidence audit runs on the cluster; the offline sandbox has none.')
+    },
     async erase() {
       const erased = { events: events.length, evidence: demoEvidence.length, branches: views.length, cached_pages: demoInventory.cached_pages }
       events.length = 0

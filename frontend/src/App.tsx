@@ -42,6 +42,7 @@ interface ViewProps {
 /** what only the island view takes: where the HUD is, and word of the figure's walking */
 interface WorldExtras {
   safeInsets?: Insets
+  homing?: boolean // the choice is made: the ghost walks back into the figure at now
   onArrive?: (eventId: string, branchId: string) => void
   onWalking?: (moving: boolean) => void
   onFocusScenario?: (scenarioId: string) => void // the World's name for focusing a decision (Line calls it onFocusDecision)
@@ -541,7 +542,7 @@ export default function App() {
           <div className={`stage__layer ${view === 'island' ? 'is-on' : ''}`}>
             <Boundary onFail={() => setWorldFailed(true)}>
               <Suspense fallback={null}>
-                <World {...viewProps} safeInsets={free} onWalking={onWalking} onFocusScenario={focusOn} />
+                <World {...viewProps} safeInsets={free} homing={justMerged} onWalking={onWalking} onFocusScenario={focusOn} />
               </Suspense>
             </Boundary>
           </div>
@@ -671,7 +672,7 @@ export default function App() {
       )}
       {connecting && <Connecting platforms={connecting} />}
       {sheet === 'compare' && active && <Compare api={api} views={[active, ...siblings.filter((s) => s.branch.id !== active.branch.id)]} scenario={scenario} onSwitch={(id) => (switchTo(id), setSheet(null))} onClose={() => setSheet(null)} />}
-      {sheet === 'model' && <ModelSheet api={api} onClose={() => setSheet(null)} />}
+      {sheet === 'model' && session && <ModelSheet api={api} personId={session.person_id} onClose={() => setSheet(null)} />}
       {sheet === 'log' && trunk && <LogView events={trunk.events} reconciliation={trunk.reconciliation ?? []} onTell={() => setSheet('tell')} onClose={() => setSheet(null)} />}
       {sheet === 'inventory' && session && (
         <InventoryView api={api} personId={session.person_id} onChanged={() => void refresh()} onOffer={() => (setIngested(null), setSheet('offering'))} onErased={() => (clearSession(), setSession(null), setTrunk(null), setViews([]), setScenarios([]), setSheet(null), setOnboarding(true), switchTo(null))} onClose={() => setSheet(null)} />

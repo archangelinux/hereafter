@@ -63,3 +63,6 @@ RESEARCH_BUDGET_SECONDS = int(os.getenv("HEREAFTER_RESEARCH_BUDGET", "75"))
 # instead of crawled again. Measured on the demo evidence base: genuine rephrasings score
 # +0.21 to +0.71, unrelated questions that share vocabulary score -0.10 to -0.16.
 REUSE_THRESHOLD = float(os.getenv("HEREAFTER_REUSE_THRESHOLD", "0.2"))
+# A published figure is a fact about a moment. Past this age the evidence audit workflow
+# marks it stale, `remembered()` stops offering it, and it is researched again on next use.
+EVIDENCE_MAX_AGE_DAYS = int(os.getenv("HEREAFTER_EVIDENCE_MAX_AGE_DAYS", "180"))
