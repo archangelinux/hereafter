@@ -154,6 +154,25 @@ def list_scenarios(person_id: str) -> list[Scenario]:
     return [Scenario(**json.loads(r["doc"])) for r in rows.fetchall()]
 
 
+def delete_scenario(scenario_id: str) -> dict[str, int]:
+    """Remove one decision: the scenario, its paths, and what was written for them (chapters, story bible,
+    research feed, narration). Their events and evidence live in the event store; the caller removes those
+    with the same branch ids (`EventStore.delete_branches`)."""
+    scenario = get_scenario(scenario_id)
+    if scenario is None:
+        return {"scenarios": 0, "branches": 0}
+    ids = sorted({*scenario.branch_ids, *(b.id for b, _ in list_branches(scenario.person_id) if b.scenario_id == scenario_id)})
+    with _lock:
+        c = conn()
+        for bid in ids:
+            for table in ("chapters", "bibles", "research_steps", "narration", "narration_status"):
+                c.execute(f"DELETE FROM {table} WHERE branch_id=?", (bid,))
+            c.execute("DELETE FROM branches WHERE id=?", (bid,))
+        c.execute("DELETE FROM scenarios WHERE id=?", (scenario_id,))
+        c.commit()
+    return {"scenarios": 1, "branches": len(ids)}
+
+
 # --- branches ---
 
 

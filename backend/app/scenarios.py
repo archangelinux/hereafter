@@ -397,6 +397,42 @@ def answer(person: Person, scenario: Scenario, answers: dict[str, str]) -> tuple
     return scenario, [branch_ops.view(bid) for bid in scenario.branch_ids], sorted(affected) if told else []
 
 
+def _family(root: Scenario) -> list[Scenario]:
+    """The decision and every decision made inside its paths (and inside theirs), children first."""
+    everyone = db.list_scenarios(root.person_id)
+    found, queue = [root], [root]
+    while queue:
+        parent = queue.pop(0)
+        inside = {b.id for b in _branches_of(parent).values()}
+        for s in everyone:
+            if s.assuming_branch_id in inside and all(s.id != f.id for f in found):
+                found.append(s)
+                queue.append(s)
+    return list(reversed(found))
+
+
+def delete(person: Person, scenario: Scenario) -> dict[str, int]:
+    """Remove an open decision, its paths, everything simulated or researched for them, and any decision made
+    inside those paths. What the person told Hereafter stays on main: the past is not rewritten, so a
+    decision that has been made cannot be removed."""
+    family = _family(scenario)
+    if scenario.status == "decided":
+        raise EditRefused(409, "this decision has been made; the past is not rewritten")
+    if any(s.status == "decided" for s in family):
+        raise EditRefused(409, "a decision made inside it has been decided; that stays on the record")
+    mine = {s.id: [b for b in _branches_of(s).values()] for s in family}
+    if any(b.forming or b.research in ("pending", "running") for bs in mine.values() for b in bs):
+        raise EditRefused(409, "these paths are still forming or being researched; delete in a moment")
+    branch_ops.flush()  # nothing queued may land after the delete
+    gone = {"scenarios": 0, "branches": 0}
+    for s in family:  # children first, so nothing is ever left pointing at a path that is gone
+        ids = [b.id for b in mine[s.id]]
+        get_store().delete_branches(person.id, ids)
+        for key, n in db.delete_scenario(s.id).items():
+            gone[key] += n
+    return gone
+
+
 def listed(person_id: str) -> list[Scenario]:
     """Open decisions first, soonest deadline first; decided ones after."""
     found = db.list_scenarios(person_id)

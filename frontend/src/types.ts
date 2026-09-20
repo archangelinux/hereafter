@@ -1,3 +1,5 @@
+import type { Action, Analysis, Source as CitedSource } from './fixtures/decision'
+
 // Mirrors docs/API.md exactly.
 
 export type Source = 'scraped' | 'passive' | 'told' | 'simulated'
@@ -299,6 +301,8 @@ export interface Scenario {
   decided_branch_id: string | null
   horizon: Horizon
   questions: Question[]
+  /** the maths behind the recommendation; only the offline demo carries it */
+  analysis?: AnalysisView
   /** set when this decision is being made inside another branch's life rather than from now */
   assuming_branch_id: string | null
   example?: boolean
@@ -316,6 +320,18 @@ export interface Question {
   choices: string[]
   applies_to: string[] // option ids; empty means every option
   answer: string | null
+}
+
+/** The decision maths for a scenario (offline demo): the posterior, the expected value of each action, and what it says to do. */
+export interface AnalysisView extends Analysis {
+  payoff: Record<Action, { interested: number; not: number }>
+  /** every question has been answered, so this is the conclusion */
+  final: boolean
+  headline: string
+  verdict: string
+  sources: CitedSource[]
+  respondsInputs: { interested: number; not: number }
+  labels: Record<Action, string>
 }
 
 export type Which = 'typical' | 'rare'

@@ -152,6 +152,8 @@ export interface Api {
   model(): Promise<ModelCard>
   inventory(personId: string): Promise<Inventory>
   erase(personId: string): Promise<EraseResult>
+  /** remove an open decision, its paths, and any decision made inside them; what you told Hereafter stays on main */
+  deleteScenario(scenarioId: string): Promise<{ deleted: { scenarios: number; branches: number } }>
   /** forget one offering: everything on main that came from it goes */
   forget(personId: string, origin: string): Promise<{ origin: string; removed: number }>
 }
@@ -304,6 +306,16 @@ function liveApi(): Api {
         }
       }),
     forget: (person_id, origin) => orLocally('POST /forget', () => post('/forget', { person_id, origin }, 60_000), notYet('Forgetting one offering')),
+    deleteScenario: (id) =>
+      orLocally(
+        'POST /scenarios/delete',
+        async () => {
+          const res = await post<{ deleted: { scenarios: number; branches: number } }>(`/scenarios/${q(id)}/delete`, {}, 180_000)
+          lastViews = lastViews.filter((v) => v.branch.scenario_id !== id)
+          return res
+        },
+        notYet('Deleting'),
+      ),
     erase: (person_id) => orLocally('POST /erase', () => post('/erase', { person_id, confirm: 'erase' }, 180_000), notYet('Erasing')),
   }
 }
@@ -366,7 +378,9 @@ let chosen: Promise<Api> | null = null
 export function getApi(): Promise<Api> {
   if (!chosen) {
     // ?offline opens the empty offline sandbox, which needs no network at all
-    const forced = new URLSearchParams(location.search).has('offline')
+    // ?demo is ?offline: the scripted sandbox, which must never touch the network or a real person's data
+    const query = new URLSearchParams(location.search)
+    const forced = query.has('offline') || query.has('demo')
     chosen = (forced ? Promise.reject(new Error('offline')) : http<Health>('/health', { timeoutMs: 1500 }))
       .then((h) => {
         if (!h?.ok) throw new Error('unhealthy')

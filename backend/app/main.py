@@ -270,6 +270,24 @@ def answer_questions(scenario_id: str, req: AnswersRequest, background: Backgrou
     return {"scenario": scenario, "branches": views}
 
 
+@app.post("/scenarios/{scenario_id}/delete")
+def delete_scenario(scenario_id: str, token: str = Depends(bearer)):
+    """Remove an open decision and its paths (and any decision made inside them). Answers you told Hereafter
+    stay on main. POST, like /erase and /forget: the API has no DELETE."""
+    scenario = db.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(404, "no such scenario")
+    person = owner(token, scenario.person_id)
+    try:
+        gone = scenarios_ops.delete(person, scenario)
+    except scenarios_ops.EditRefused as refused:
+        raise HTTPException(refused.status, refused.message)
+    from . import state as state_module
+    for key in [k for k in state_module._cache if k[0] == person.id]:
+        state_module._cache.pop(key, None)
+    return {"deleted": gone}
+
+
 @app.get("/research")
 def research_feed(branch_id: str, token: str = Depends(bearer)):
     _, branch, _ = owned_branch(token, branch_id)
