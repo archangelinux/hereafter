@@ -23,10 +23,10 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import ticket, branches as branch_ops
-from . import chapters, config, db, llm, model_card, research, security, seed
+from . import config, db, llm, model_card, research, security, seed
 from . import scenarios as scenarios_ops
 from .ingest import links, pipeline
-from .models import (AnswersRequest, EditRequest, Branch, BranchView, CarryRequest, CommitRequest, EraseRequest, ForgetRequest, LifeEvent, MergeRequest,
+from .models import (AnswersRequest, EditRequest, Branch, BranchView, CommitRequest, EraseRequest, ForgetRequest, LifeEvent, MergeRequest,
                      Option, Person, PersonRequest, Scenario, ScenarioRequest, SimulateRequest, StateVector,
                      UndoRequest)
 from .personality import Personality, merge as merge_personality
@@ -41,7 +41,6 @@ if not log.handlers:
     _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s: %(message)s"))
     log.addHandler(_handler)
     log.setLevel(logging.INFO)
-NARRATION_BATCH = 25
 DATE_PRECONDITION = re.compile(r"^\s*([\w ]+?)\s*:\s*(\d{4}-\d{2}-\d{2})\s*$")
 STATE_PRECONDITION = re.compile(r"^\s*(\w+)\s*:\s*(.+?)\s*$")
 COMPARE_EVERY = 5
@@ -203,7 +202,12 @@ async def ingest(
 def trunk(person_id: str, token: str = Depends(bearer)):
     person = owner(token, person_id)
     main, state, steps, decisions = _present(person)
-    return {"person": person, "now": today(), "events": main, "state": state,
+    # The log is what the person did: decisions they made, and things they told Hereafter about a
+    # date. Everything scraped or uploaded is context — it shapes the state vector and what the
+    # model is told, and is listed under "your data", but it is never a dated mark on main.
+    log = [e for e in main if e.source == "told" or e.event_type in ("decision", "goal")]
+    context = [e for e in main if e not in log]
+    return {"person": person, "now": today(), "events": log, "context": context, "state": state,
             "agent_log": steps, "reconciliation": decisions}
 
 
@@ -282,7 +286,6 @@ def simulate_branch(req: SimulateRequest, background: BackgroundTasks, token: st
     person = owner(token, req.person_id)
     _, fork, _, _ = _present(person)
     view = branch_ops.create_branch(person, fork, req.label, req.assumption, req.precondition, req.horizon_years)
-    background.add_task(narrate_branch, view.branch.id)
     return view
 
 
@@ -327,13 +330,14 @@ def commit(branch_id: str, req: CommitRequest, token: str = Depends(bearer)) -> 
     if step is None or step >= len(years):
         raise HTTPException(400, "that moment is not on this path")
     known = {e["key"] for e in (branch.model or {}).get("events", []) if not e.get("head")}
-    if req.event_key and req.event_key not in known:
+    keys = list(dict.fromkeys(req.event_keys or ([req.event_key] if req.event_key else [])))
+    if any(k not in known for k in keys):
         raise HTTPException(404, "that possibility is not on this path")
-    if not req.event_key and not req.message.strip():
+    if not keys and not req.message.strip():
         raise HTTPException(400, "say what you would decide")
     with branch_ops.lock:
         branch = db.get_branch(branch_id)[0]
-        return branch_ops.add_commit(person, branch, step, req.message.strip(), req.event_key)
+        return branch_ops.add_commit(person, branch, step, req.message.strip(), event_keys=keys)
 
 
 @app.post("/branches/{branch_id}/undo")
@@ -395,35 +399,6 @@ def compare(a: str, b: str, c: Optional[str] = None, token: str = Depends(bearer
     return {"branches": [branch for _, branch, _ in picked], "checkpoints": checkpoints, "distinctive": distinctive,
             "measures": {branch.id: (branch.measures or {}).get("end") for _, branch, _ in picked},
             "money_end": {branch.id: (branch.measures or {}).get("money_end") for _, branch, _ in picked}}
-
-
-@app.get("/lives")
-def lives(branch_id: str, which: str = "typical", token: str = Depends(bearer)):
-    _, branch, years = owned_branch(token, branch_id)
-    if which != "rare":
-        return {"which": "typical", "rarity_words": "the most typical of the thousand simulated lives", "years": years}
-    rare = db.rare_life(branch_id)
-    happened = [e.event_type for y in rare for e in y.events if e.payload.get("basis") != "background"]
-    labels = {e["key"]: e["label"] for e in (branch.model or {}).get("events", [])}
-    rarest = next((k for k in (get_store().rarest_keys(branch) or []) if k in happened), None)
-    if rarest is None and rare:  # numpy fallback: the least shared thing that happens in this life
-        final = rare[-1].outlook
-        rarest = min((k for k in happened if k in final), key=lambda k: final[k].share, default=None)
-    words = "the rarest coherent life among the thousand"
-    if rarest in labels:
-        words += f" — the one where {labels[rarest][0].lower()}{labels[rarest][1:]}"
-    return {"which": "rare", "rarity_words": words, "years": rare}
-
-
-@app.get("/chapters")
-def chapter(branch_id: str, at: Optional[str] = None, year: Optional[int] = None, which: str = "typical",
-            token: str = Depends(bearer)):
-    _, branch, years = owned_branch(token, branch_id)
-    if which == "rare":
-        years = db.rare_life(branch_id)
-    if not years:
-        raise HTTPException(404, "this path has no steps")
-    return chapters.chapter_for(branch, years, chapters.step_index(years, at, year), "rare" if which == "rare" else "typical")
 
 
 @app.get("/evidence")
@@ -492,56 +467,6 @@ def merge(req: MergeRequest, token: str = Depends(bearer)):
             scenario.status, scenario.decided_branch_id = "decided", branch.id
             db.save_scenario(scenario)
     return {"merged": branch, "faded": faded, "told_event": told}
-
-
-@app.post("/carry")
-def carry(req: CarryRequest, token: str = Depends(bearer)):
-    _, branch, years = owned_branch(token, req.branch_id)
-    if branch.status not in ("faded", "stale"):
-        raise HTTPException(409, "only a road not taken can give something up")
-    if branch.carried_event_id:
-        raise HTTPException(409, "one thing has already been carried from this path")
-    event = next((e for y in years for e in y.events if e.id == req.event_id), None)
-    if not event:
-        raise HTTPException(404, "that event is not on this path")
-
-    goal = LifeEvent(
-        id=sha1(f"{branch.id}|carry".encode()).hexdigest()[:16], person_id=branch.person_id,
-        source="told", branch_id="main", date=today(), domain=event.domain, event_type="goal",
-        payload={"from_branch": branch.id, "carried_event_id": event.id, "carried_event_type": event.event_type,
-                 "target_date": event.date, **event.payload},
-        confidence=1.0, text=event.text,
-    )
-    get_store().append([goal])
-    with branch_ops.lock:
-        branch.carried_event_id = event.id
-        db.save_branch(branch)
-    return {"goal_event": goal, "branch": branch}
-
-
-# --- narration (one line per event; chapters are the richer form) ---
-
-
-@app.get("/narration")
-def narration(branch_id: str, token: str = Depends(bearer)):
-    owned_branch(token, branch_id)
-    lines, complete = db.get_lines(branch_id)
-    return {"branch_id": branch_id, "complete": complete or not llm.enabled(), "lines": lines}
-
-
-def narrate_branch(branch_id: str) -> None:
-    """Background only. The UI has already rendered every event's plain `text`."""
-    found = db.get_branch(branch_id)
-    if not found or not llm.enabled():
-        return
-    events = [e for y in found[1] for e in y.events]
-    for i in range(0, len(events), NARRATION_BATCH):
-        batch = [{"event_id": e.id, "year": e.date[:4], "domain": e.domain, "event_type": e.event_type,
-                  "details": e.payload} for e in events[i: i + NARRATION_BATCH]]
-        lines = llm.narrate(batch)
-        if lines:
-            db.save_lines(branch_id, lines, complete=False)
-    db.save_lines(branch_id, {}, complete=True)
 
 
 # --- what is known, and burning the book ---

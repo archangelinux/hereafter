@@ -285,8 +285,6 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .h-hint { justify-self: center; width: auto !important; margin: 0 0 8px; padding: 6px 14px; border-radius: 999px; background: var(--color-text); color: var(--color-paper); font-size: 14px; line-height: 20px; font-weight: 500; box-shadow: 0 1px 2px rgba(92, 83, 71, 0.08), 0 12px 32px -16px rgba(92, 83, 71, 0.35); animation: drift-in var(--motion-medium) var(--motion-ease) both; pointer-events: none !important; }
 .h-hint__example { justify-self: center; width: auto !important; margin-bottom: 8px; background: var(--color-paper); border-radius: 8px; padding: 2px 8px; text-decoration: none; }
 .line__fork--collapsed { cursor: pointer; }
-.line__fork-name { opacity: 0; transition: opacity var(--motion-quick); font-size: 12px; fill: var(--color-text); pointer-events: none; }
-.line__fork-hit:hover + .line__fork-name, .line__fork-hit:focus + .line__fork-name { opacity: 1; }
 .line__fork-hit { fill: transparent; cursor: pointer; }
 .lane__tick--head { stroke-width: 0; }
 

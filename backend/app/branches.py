@@ -252,7 +252,8 @@ def _cap_background(years: list[BranchYear]) -> list[BranchYear]:
 
 def resimulate(person: Person, branch: Branch) -> BranchView:
     dates, labels = _steps(branch)
-    patches = [{"step": c.patch.get("step", 0), **c.patch.get("model", {})} for c in branch.commits]
+    patches = [{"step": p.get("step", 0), **p.get("model", {})}
+               for c in branch.commits for p in (c.patch.get("pins") or [{"step": c.patch.get("step", 0), "model": c.patch.get("model", {})}])]
     events = ensure_head(normalize(branch.model.get("events", [])), choice_label(branch.label))
     resolve_terms(events, load_tables(str(config.DATA_DIR)).trait_effects)
     widen = branch.model.get("widen", 0.0)
@@ -269,7 +270,7 @@ def resimulate(person: Person, branch: Branch) -> BranchView:
     if has_background(branch.span):
         tables = load_tables(str(config.DATA_DIR))
         engine_year = lambda step: branch.fork["year"] + int((dates[step] - dates[0]).days // 365.25) + 1
-        commits = [(engine_year(c.patch.get("step", 0)), {k: v for k, v in c.patch.items() if k not in ("model", "step")})
+        commits = [(engine_year(c.patch.get("step", 0)), {k: v for k, v in c.patch.items() if k not in ("model", "step", "pins", "event_keys")})
                    for c in branch.commits]
         sim_params = {k: v for k, v in branch.params.items() if k in ("salary", "graduates_in", "housing_cost_ratio")}
         assumption = {k: v for k, v in branch.assumption.items() if k in STATE_FIELDS or k == "graduates_in"}
@@ -371,18 +372,55 @@ def view(branch_id: str) -> BranchView:
     return BranchView(branch=branch, years=years)
 
 
-def add_commit(person: Person, branch: Branch, step: int, message: str, event_key: Optional[str] = None) -> BranchView:
-    """One more step on the path you are on. Either the person's own words (structure is extracted),
-    or `event_key`: "assume this possibility happens" — that event is forced, no LLM involved."""
+def _needs(event: dict) -> list[str]:
+    """What must already have happened for this one to be able to happen at all."""
+    return list(event.get("requires") or []) + [d["key"] for d in event.get("depends_on", []) if d.get("relation") == "requires"]
+
+
+def pins_for(events: list[dict], keys: list[str], step: int, n_steps: int) -> list[dict]:
+    """Where a set of pinned possibilities lands. What a pick cannot happen without is pulled in with
+    it, and nothing is pinned before its own moment can come or before the thing it rests on."""
+    by_key = {e["key"]: e for e in events if not e.get("head")}
+    order: list[str] = []
+
+    def take(key: str, trail: tuple = ()) -> None:
+        if key not in by_key or key in order or key in trail:
+            return
+        for need in _needs(by_key[key]):
+            take(need, trail + (key,))
+        order.append(key)
+
+    for key in keys:
+        take(key)
+    at: dict[str, int] = {}
+    for key in order:
+        opens = int((by_key[key].get("window") or [0])[0])
+        at[key] = min(n_steps - 1, max([step, opens] + [at[n] for n in _needs(by_key[key]) if n in at]))
+    return [{"key": key, "step": at[key]} for key in order]
+
+
+def add_commit(person: Person, branch: Branch, step: int, message: str, event_key: Optional[str] = None,
+               event_keys: Optional[list[str]] = None) -> BranchView:
+    """One more thing assumed on the path you are on. Either the person's own words (structure is
+    extracted), or possibilities pinned: "assume these happen" — they are forced, no LLM involved,
+    and whatever they cannot happen without is pinned with them. One commit, however many pins:
+    undoing it lets go of the whole configuration at once."""
     dates, _ = _steps(branch)
-    if event_key:
-        event = next(e for e in branch.model["events"] if e["key"] == event_key)
-        step = max(step, event["window"][0])  # not before its own moment can come
-        message = f"{event['label']} happens"
-        patch: dict = {"step": step, "event_key": event_key, "model": {"force": [event_key], "prevent": [], "likelier": [], "less_likely": []}}
+    keys = list(event_keys or ([event_key] if event_key else []))
+    if keys:
+        events = branch.model.get("events", [])
+        labels = {e["key"]: e["label"] for e in events}
+        pins = pins_for(events, keys, step, len(dates))
+        if not pins:
+            raise ValueError("none of those possibilities are on this path")
+        step = min(p["step"] for p in pins)
+        said = [labels.get(p["key"], p["key"]) for p in pins]
+        message = (", ".join(said[:-1]) + " and " + said[-1] if len(said) > 1 else said[0]) + (" happen" if len(said) > 1 else " happens")
+        patch: dict = {"step": step, "event_keys": [p["key"] for p in pins],
+                       "pins": [{"step": p["step"], "model": {"force": [p["key"]], "prevent": [], "likelier": [], "less_likely": []}} for p in pins]}
     else:
         patch = {"step": step, "model": model_patch(message, branch.model.get("events", []))}
-    if has_background(branch.span) and not event_key:  # a what-if may also change the life-course underneath
+    if has_background(branch.span) and not keys:  # a what-if may also change the life-course underneath
         parsed = llm.extract_patch(branch.label, dates[step].year, message)
         background = parsed.model_dump(exclude_none=True) if parsed else rules_assumption(message)
         if background.get("salary"):
@@ -391,6 +429,7 @@ def add_commit(person: Person, branch: Branch, step: int, message: str, event_ke
         patch.update(background)
     branch.commits.append(Commit(id=uuid.uuid4().hex[:10], branch_id=branch.id, year=dates[step].year,
                                  at=dates[step].isoformat(), message=message, patch=patch,
+                                 event_key=keys[0] if len(keys) == 1 else None,
                                  created_at=datetime.now().isoformat(timespec="seconds")))
     branch.revision += 1
     return resimulate(person, branch)

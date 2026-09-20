@@ -112,8 +112,11 @@ export function Walker({ layout, target, state, still, onRest, pale = false }: P
       if (key !== lastTarget.current) {
         lastTarget.current = key
         const hops = Math.max(1, s.laneId === wantLane ? (target?.steps ?? 1) : 3)
-        // about a second and a half for one step whatever its length; several steps go quicker each, never rushed
-        cruise.current = Math.max(0.5, Math.abs(gap) / (0.95 + 0.42 * (hops - 1)))
+        // ONE PACE. The same ground covered per second whatever the step's length, so a short step and a
+        // long one look like the same walk; the floor and ceiling keep a hair's-breadth step from crawling
+        // and a long one from sprinting. Several steps at once go quicker each, never rushed.
+        const shuffle = Math.min(1.7, Math.abs(gap) / 0.3) // a step of almost nothing is a shuffle, not a twitch
+        cruise.current = Math.min(5, Math.max(shuffle, Math.abs(gap) / (0.7 + 0.35 * (hops - 1))))
       }
       if (Math.abs(gap) > 0.004 || Math.abs(vel.current) > 0.02) {
         const accel = cruise.current / 0.45

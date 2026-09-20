@@ -62,8 +62,24 @@ def _set_status(branch_id: str, status: str) -> None:
 
 
 def _same_question(a: str, b: str) -> bool:
+    """Near-identical wording. Only used when no reranker is available to judge meaning."""
     ta, tb = set(re.findall(r"[a-z0-9]{3,}", a.lower())), set(re.findall(r"[a-z0-9]{3,}", b.lower()))
     return bool(ta and tb) and len(ta & tb) / len(ta | tb) >= 0.6
+
+
+def _best_recall(question: str, candidates: list) -> Optional[Evidence]:
+    """Which stored figure, if any, already answers this question.
+
+    Reusing the wrong figure is worse than crawling again — it puts a number the simulator will
+    trust behind an event it does not describe — so the bar is a cross-encoder reading the two
+    questions against each other, not word overlap. Two questions that mean the same thing in
+    different words score well above zero; two that merely share vocabulary score below it.
+    With no reranker configured the gate falls back to near-identical wording."""
+    scores = get_store().question_match(question, [c.question for c in candidates])
+    if scores:
+        score, best = max(zip(scores, candidates), key=lambda pair: pair[0])
+        return best if score >= config.REUSE_THRESHOLD else None
+    return next((c for c in candidates if _same_question(c.question, question)), None)
 
 
 def _recall(leads: list[Lead]) -> None:
@@ -71,11 +87,12 @@ def _recall(leads: list[Lead]) -> None:
     for lead in leads:
         if lead.parameter != "event":
             continue
-        for old in get_store().remembered(lead.question):
-            if old.question and old.figure and old.snippet and _same_question(old.question, lead.question):
-                lead.remembered = old
-                _step(lead.branch_id, "found", f"Found in memory: {old.claim}", old.source_url)
-                break
+        candidates = [e for e in get_store().remembered(lead.question)
+                      if e.question and e.figure and e.snippet]
+        old = _best_recall(lead.question, candidates) if candidates else None
+        if old:
+            lead.remembered = old
+            _step(lead.branch_id, "found", f"Found in memory: {old.claim}", old.source_url)
 
 
 def _find_pages(bb, leads: list[Lead]) -> None:

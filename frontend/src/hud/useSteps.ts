@@ -21,19 +21,27 @@ export function useSteps(p: {
 }) {
   const { view, walking, onStep, onAdvance } = p
   const years = view?.years ?? []
-  const key = view ? `${view.branch.id}:${view.branch.revision}` : ''
+  // The path you are reading. NOT its revision: a commit redraws the path under you, and the reading
+  // must stay where you are standing — you committed something HERE — rather than snap back to the fork.
+  const key = view ? view.branch.id : ''
 
+  // A step is one dated thing on the path — and the last stop is always the path's end, event or not:
+  // that is where it has got you by, and in the island it is the platform the figure comes to rest on.
   const stops = useMemo(() => {
     if (!view) return []
     const commits = new Set(view.branch.commits.map((c) => Math.max(0, years.findIndex((y) => y.at >= c.at))))
-    return years.map((_, i) => i).filter((i) => i === 0 || years[i].events.length > 0 || commits.has(i))
+    return years.map((_, i) => i).filter((i) => i === 0 || i === years.length - 1 || years[i].events.length > 0 || commits.has(i))
   }, [view, years])
 
   const [pos, setPos] = useState(0)
   const queued = useRef<1 | -1 | null>(null)
   const posRef = useRef(0)
   posRef.current = pos
-  useEffect(() => setPos(0), [key])
+  // a different path (or one redrawn under you): back to its start, and nothing held from the last one
+  useEffect(() => {
+    queued.current = null
+    setPos(0)
+  }, [key])
 
   const step = stops[Math.min(pos, stops.length - 1)] ?? 0
   useEffect(() => onStep(view ? step : null), [step, key]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -57,8 +65,11 @@ export function useSteps(p: {
     move(d)
   }, [walking, move])
 
+  // Being sent somewhere (a click on a mark, on a path's end platform, the End key) beats anything
+  // held: a press queued while the figure was walking must not drag it back off the place it was sent.
   useEffect(() => {
     if (!p.seek) return
+    queued.current = null
     const target = stops.findIndex((s) => s >= p.seek!.step)
     setPos(target < 0 ? stops.length - 1 : target)
     // eslint-disable-next-line react-hooks/exhaustive-deps

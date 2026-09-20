@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Optional
 
-from . import llm
+from . import agent_builder, config, llm
 from .models import AgentStep, Decision, LifeEvent, Person, StateVector
 from .store import EventStore
 
@@ -111,6 +111,14 @@ def _rules_plan(empty: list[str], ran: list[dict]) -> list[dict]:
     return plan
 
 
+def _elastic_plan(person_id: str, empty: list[str], filled: dict) -> Optional[list[dict]]:
+    """The Agent Builder agent on the cluster, asked which queries to run. It does its own
+    replanning internally, so it answers with the whole plan at once rather than one round."""
+    if config.STATE_PLANNER != "elastic":
+        return None
+    return agent_builder.plan(person_id, empty, filled)
+
+
 def _llm_plan(empty: list[str], filled: dict, ran: list[dict]) -> Optional[list[dict]]:
     planned = llm.plan_queries(empty, filled, ran)
     if planned is None:
@@ -149,14 +157,17 @@ def build_state(store: EventStore, person: Person, n_main: int) -> tuple[StateVe
         empty = [s for s in SLOTS if s not in filled]
         if not empty or len(steps) >= MAX_STEPS:
             break
-        plan = _llm_plan(empty, filled, ran)
-        planner = "llm"
+        plan, planner = _elastic_plan(person.id, empty, filled), "elastic"
+        if plan is None:
+            plan, planner = _llm_plan(empty, filled, ran), "llm"
         if plan is None:
             plan, planner = _rules_plan(empty, ran), "rules"
         if not plan:
             break
         for q in plan[: MAX_STEPS - len(steps)]:
             run(q, planner)
+        if planner == "elastic":
+            break  # that plan already came from the agent's own replanning rounds
 
     # Activity density always comes from the aggregation: events per recent year, all domains.
     this_year = date.today().year

@@ -94,6 +94,7 @@ class Commit(BaseModel):
     year: int
     at: str = ""
     message: str
+    event_key: Optional[str] = None  # set when it assumed one of the listed possibilities
     patch: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
@@ -196,7 +197,7 @@ class AgentStep(BaseModel):
     args: dict[str, Any]
     reason: str
     hits: int
-    planner: Literal["llm", "rules"]
+    planner: Literal["elastic", "llm", "rules"]
 
 
 class Person(BaseModel):
@@ -276,6 +277,7 @@ class AnswersRequest(BaseModel):
 class CommitRequest(BaseModel):
     message: str = ""
     event_key: Optional[str] = None  # instead of a message: "assume this possibility happens"
+    event_keys: list[str] = []       # several at once: one commit, one configuration of possibilities
     at: Optional[str] = None
     year: Optional[int] = None
 

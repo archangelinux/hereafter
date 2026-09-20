@@ -8,7 +8,7 @@ import { useSteps } from './hud/useSteps'
 import { useRails } from './hud/useRails'
 import { useZones } from './hud/useZones'
 import { withGuides } from './derive'
-import { belongsOnLine, isByYear, stepDate } from './format'
+import { belongsOnLine } from './format'
 import { Line } from './line/Line'
 import { theme } from './theme'
 import type { BranchView, IngestResult, Insets, ResearchStep, TicketPatch, LifeEvent, Question, Scenario, Session, TrunkResponse, Zone } from './types'
@@ -199,10 +199,13 @@ export default function App() {
   }, [islandAvailable])
 
   // island view: the figure walks to where the reading is. Lines wait for it, but never for long.
+  // The world says when it comes to rest; this is only a net for a dropped frame, so it has to outlast
+  // the longest walk there is — the whole way out to a path's end platform. Cut it short and a press
+  // held during that walk fires early and pulls the figure back a step or two.
   const onWalking = useCallback((moving: boolean) => {
     if (walkTimer.current) clearTimeout(walkTimer.current)
     setWalking(moving)
-    if (moving) walkTimer.current = setTimeout(() => setWalking(false), 2600)
+    if (moving) walkTimer.current = setTimeout(() => setWalking(false), 8000)
   }, [])
 
 
@@ -409,7 +412,8 @@ export default function App() {
   // they exist at all — and the layout draws lanes for the open ones alone.
   // every path ever drawn stays in the scene, closed ones included: they are drawn back as ruins, not removed
   const sceneViews = useMemo(
-    () => drawn.map((v) => ({ ...v, years: v.years.map((y) => ({ ...y, label: y.label === '' ? '' : stepDate(y.at, isByYear(v.years)) })) })),
+    // No dates on a projected step: nothing here has happened. Only a commit the person made carries one.
+    () => drawn.map((v) => ({ ...v, years: v.years.map((y) => ({ ...y, label: '' })) })),
     [drawn],
   )
   const sceneScenarios = useMemo(() => scenarios.map((x) => ({ ...x, collapsed: !open.has(x.id) })), [scenarios, open])
@@ -543,7 +547,7 @@ export default function App() {
           {hint && !deciding && <p className="h-hint" key={hint}>{hint}</p>}
           {!deciding && scenarios.length === 0 && session && session.person_id !== 'demo' && <a className="h-link h-hint__example" href="?person=demo">See an example</a>}
           {deciding && session ? (
-            <NewDecision inside={assuming ? `${assuming.branch.label}, ${stepDate((assuming.years[hereStep ?? 0] ?? assuming.years[0])?.at ?? trunk?.now ?? '')}` : null} busy={busy === 'decide'} error={error} onCreate={(d, ps) => void createDecision(d, ps)} onClose={() => setDeciding(false)} />
+            <NewDecision inside={assuming ? assuming.branch.label : null} busy={busy === 'decide'} error={error} onCreate={(d, ps) => void createDecision(d, ps)} onClose={() => setDeciding(false)} />
           ) : null}
 
         </div>

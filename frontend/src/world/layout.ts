@@ -76,7 +76,14 @@ export interface LaneSpec {
   samples: Sample[]
   built: Float32Array // per sample, 0..1: how BUILT the band is there
   fade: Float32Array // per sample, 1..0: past where the stone gives out, its drawn edges soon go to mist
-  tagD: number
+  /** the end of the branch: a small platform where the figure comes to rest, where the path's name
+   *  stands, and where the way could divide again. A road not taken ends where it comes away. */
+  endD: number
+  endR: number
+  /** every place the figure comes to rest on this path, in order: a circle for each, the last being
+   *  the end platform itself. The reading stops at exactly these (see useSteps), so a step and a
+   *  circle are the same thing — the figure always stands on one. */
+  rests: { step: number; d: number }[]
   /** the end of the first step: what a merge would commit (HEAD) */
   headD: number
   nodes: NodeSpec[]
@@ -190,7 +197,7 @@ export function isBig(s: Scenario): boolean {
 /** Options of a big decision fan across the whole forward half of the sky. */
 function bigAngles(n: number): number[] {
   if (n <= 1) return [36 * DEG]
-  const gap = Math.min(62, 180 / (n - 1))
+  const gap = Math.min(68, 180 / (n - 1))
   return Array.from({ length: n }, (_, i) => (i - (n - 1) / 2) * gap * DEG)
 }
 
@@ -316,7 +323,10 @@ export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: Bra
       const merged = status === 'merged'
       const steps = view.years.length
       const span = Math.max(1 / 365, yearOf(view.years[steps - 1].at) - Math.min(now, yearOf(view.branch.forked_at)))
-      const fullLen = Math.round((big ? Math.max(12, Math.min(26, 10 + 22 * Math.sqrt(span / 40))) * (parent ? 0.75 : 1) : HANDLE + 1) / DS) * DS
+      // no two paths of a decision run the same distance: their ends stagger, so the tips read as a tree
+      // rather than a row. Deterministic from the branch's id, so a path never changes length on a redraw.
+      const stagger = 1 - 0.12 * (i % 3) + 0.06 * (hash01(view.branch.id + ':len') - 0.5)
+      const fullLen = Math.round((big ? Math.max(9, Math.min(18, 8 + 14 * Math.sqrt(span / 40))) * (parent ? 0.75 : 1) : HANDLE + 1) * stagger / DS) * DS
       const stepLen = fullLen / steps
       // each step ends where its date falls, with time eased so the dense early weeks get room: the first
       // month of a three-year path takes about a fifth of it. Never less than a sliver per step.
@@ -375,7 +385,7 @@ export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: Bra
       } else {
         // a thin offshoot that keeps close to the band it left; chosen, it comes back in like a cup handle
         const order = merged ? 0 : ++rank - (chosen >= 0 ? 0 : 1)
-        const amp = (0.9 + 0.7 * order) * scale + (chosen >= 0 && !merged ? 0.35 : 0)
+        const amp = (1.1 + 1.45 * order) * scale + (chosen >= 0 && !merged ? 0.35 : 0) // far enough apart that their ends do not crowd
         // each option has its own exit point on the rim of the circle, further round for each one out
         const R = SMALL_R * scale * 0.8
         const phi = (28 + 44 * order) * DEG // far enough round the rim from its neighbour that there is daylight between them
@@ -422,10 +432,19 @@ export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: Bra
         const t = clamp01((k * DS - giveOut) / (big ? 9 : 1.5))
         fade[k] = status === 'open' ? 1 - t * t * (3 - 2 * t) : 1
       }
-      const tagStagger = scenario === primary ? i * (big ? 1.1 : 0.45) : 0
-      const tagD0 = big ? Math.max(1.2, Math.min(drawLen - 0.1, giveOut + 2, 12.5)) : Math.min(drawLen, fullLen * 0.86)
+      // where the path ends as a place you can stand: exactly the band's own nose (see Band's endTarget),
+      // so the platform always sits on the end of something drawn. One size down from a decision's circle.
+      const endD = status === 'open' ? fullLen : Math.min(fullLen, drawLen)
+      const endR = (big ? 0.95 : 0.3) * scale
 
-      const tagD = Math.min(fullLen - 0.2, tagD0 + tagStagger)
+      // where it comes to rest: the choice it begins with, each step something happens at, each commit,
+      // and the end. Nothing rests ON the platform but the last one.
+      const commitSteps = new Set((view.branch.commits ?? []).map((c) => Math.max(0, view.years.findIndex((y) => y.at >= c.at))))
+      const short = endR + 0.35 // no circle may sit inside the end platform
+      const rests = view.years
+        .map((_, k) => k)
+        .filter((k) => k === 0 || k === steps - 1 || view.years[k].events.length > 0 || commitSteps.has(k))
+        .map((k) => ({ step: k, d: k === steps - 1 ? endD : Math.min(endD - short, dOfS({ stepEnds }, k + 0.6)) }))
 
       const nodes: NodeSpec[] = []
       view.years.forEach((step, index) => {
@@ -440,7 +459,7 @@ export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: Bra
       for (const c of view.branch.commits ?? []) {
         const index = Math.max(0, view.years.findIndex((y) => y.at >= c.at || y.year >= c.year))
         const d = (index === 0 ? 0 : stepEnds[index - 1]) + 0.12 * (stepEnds[index] - (index === 0 ? 0 : stepEnds[index - 1]))
-        if (d <= drawLen && d >= fromD) nodes.push({ id: c.id, kind: 'commit', step: index, d, label: c.message, caption: view.years[index].label, basis: 'background', domain: 'commit' })
+        if (d <= drawLen && d >= fromD) nodes.push({ id: c.id, kind: 'commit', step: index, d, label: c.message, caption: dayLabel(c.at), basis: 'background', domain: 'commit' })
       }
 
       const deadline = view.branch.precondition?.match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? null
@@ -466,7 +485,9 @@ export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: Bra
         samples,
         built,
         fade,
-        tagD,
+        endD,
+        endR,
+        rests,
         headD: stepEnds[0],
         nodes,
         note: status === 'open' && deadline ? `open until ${dayLabel(deadline)}` : (STATUS_NOTE[status] ?? ''),
@@ -511,7 +532,7 @@ export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: Bra
   const frame: Sample[] = [mainAxis(-backLen), mainAxis(0), mainAxis(2), ...seeds.map((s) => s.at)]
   for (const p of plazas) if (p.onMain && (!p.collapsed || Math.hypot(p.at.x, p.at.z) < backLen)) frame.push(p.at)
   for (const l of lanes) {
-    const reach = l.status === 'open' ? Math.min(l.tagD + 1, 13.5) : Math.min(l.drawLen, 7)
+    const reach = l.endD + 0.9 // the overview holds every path's end platform: that is where its name is
     for (let d = Math.max(0, l.fromD); d <= reach; d += 1.5) frame.push(along(l.samples, d))
   }
 

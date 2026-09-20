@@ -37,6 +37,7 @@ class EventStore(Protocol):
     def distinctive(self, branch, siblings: list) -> list[dict] | None: ...
     def rarest_keys(self, branch) -> list[str] | None: ...
     def remembered(self, question: str, size: int = 3) -> list[Evidence]: ...
+    def question_match(self, question: str, candidates: list[str]) -> list[float]: ...
     def track_record(self, person_id: str) -> tuple[int, int]: ...
 
 
@@ -170,6 +171,26 @@ class ElasticStore:
             "types": {t["key"]: t["doc_count"] for t in aggs["types"]["buckets"]},
         }
 
+    def _fuse(self, index: str, size: int, lexical: dict, dense: dict, text: str, field: str, what: str):
+        """Three stages, plainest last: BM25 and dense fused by RRF, then that window read by a
+        Jina cross-encoder, which scores the query against each candidate's actual words rather
+        than against a single vector. Each stage falls back to the one before it, so a sleeping
+        model or a missing endpoint degrades retrieval instead of failing it."""
+        rrf = {"rrf": {"retrievers": [lexical, dense], "rank_window_size": 50}}
+        attempts = [rrf]
+        if config.ES_RERANK_ID:
+            attempts.insert(0, {"text_similarity_reranker": {
+                "retriever": rrf, "field": field, "inference_id": config.ES_RERANK_ID,
+                "inference_text": text, "rank_window_size": max(4 * size, 20),
+            }})
+        for retriever in attempts:
+            try:
+                return self.es.search(index=index, size=size, retriever=retriever)
+            except Exception as exc:
+                log.warning("%s: %s unavailable (%s); falling back", what, next(iter(retriever)),
+                            type(exc).__name__)
+        return self.es.search(index=index, size=size, retriever=lexical)
+
     def hybrid_search(self, person_id: str, text: str, size: int = 5) -> list[LifeEvent]:
         filt = self._filter(person_id)
         lexical = {"standard": {"query": {"bool": {"must": {"match": {"text": text}}, "filter": filt}}}}
@@ -185,15 +206,7 @@ class ElasticStore:
                 }
             }
         }
-        try:
-            resp = self.es.search(
-                index=self.index, size=size,
-                retriever={"rrf": {"retrievers": [lexical, dense], "rank_window_size": 50}},
-            )
-        except Exception as exc:  # embedding model asleep or RRF unavailable: lexical still answers
-            log.warning("hybrid retrieval fell back to BM25 (%s)", type(exc).__name__)
-            resp = self.es.search(index=self.index, size=size, retriever=lexical)
-        return self._hits(resp)
+        return self._hits(self._fuse(self.index, size, lexical, dense, text, "text", "life events"))
 
 
     # --- evidence: public facts and statistics, not the immutable past, so plain upserts ---
@@ -229,13 +242,8 @@ class ElasticStore:
         filt = [{"term": {"person_id": person_id}}, {"term": {"branch_id": branch_id}}]
         lexical = {"standard": {"query": {"bool": {"must": {"multi_match": {"query": text, "fields": ["claim", "snippet"]}}, "filter": filt}}}}
         dense = {"standard": {"query": {"bool": {"must": {"semantic": {"field": "claim_semantic", "query": text}}, "filter": filt}}}}
-        try:
-            resp = self.es.search(index=self.evidence_index, size=size,
-                                  retriever={"rrf": {"retrievers": [lexical, dense], "rank_window_size": 50}})
-        except Exception as exc:
-            log.warning("evidence retrieval fell back to BM25 (%s)", type(exc).__name__)
-            resp = self.es.search(index=self.evidence_index, size=size, retriever=lexical)
-        return self._evidence_hits(resp)
+        return self._evidence_hits(
+            self._fuse(self.evidence_index, size, lexical, dense, text, "claim", "evidence"))
 
     def remembered(self, question: str, size: int = 3) -> list[Evidence]:
         """Researched evidence from anyone's earlier research that may answer the same question.
@@ -243,12 +251,28 @@ class ElasticStore:
         filt = [{"term": {"kind": "researched"}}, {"exists": {"field": "question"}}]
         lexical = {"standard": {"query": {"bool": {"must": {"match": {"question": question}}, "filter": filt}}}}
         dense = {"standard": {"query": {"bool": {"must": {"semantic": {"field": "claim_semantic", "query": question}}, "filter": filt}}}}
+        # Reranked on `question`: whether to reuse a figure turns on the two questions asking the
+        # same thing, which a cross-encoder judges and a single vector only approximates.
+        return self._evidence_hits(
+            self._fuse(self.evidence_index, size, lexical, dense, question, "question", "memory"))
+
+    def question_match(self, question: str, candidates: list[str]) -> list[float]:
+        """How well each already-researched question answers this one, scored by the Jina
+        cross-encoder. Positive means the same question asked in other words; negative means a
+        different question that merely shares vocabulary. Returns [] when no reranker is
+        configured, which tells the caller to fall back to comparing the wording."""
+        if not (config.ES_RERANK_ID and candidates):
+            return []
         try:
-            resp = self.es.search(index=self.evidence_index, size=size,
-                                  retriever={"rrf": {"retrievers": [lexical, dense], "rank_window_size": 30}})
-        except Exception:
-            resp = self.es.search(index=self.evidence_index, size=size, retriever=lexical)
-        return self._evidence_hits(resp)
+            resp = self.es.inference.rerank(inference_id=config.ES_RERANK_ID, query=question,
+                                            input=candidates)
+        except Exception as exc:
+            log.warning("question rerank unavailable (%s); comparing wording instead", type(exc).__name__)
+            return []
+        scores = [0.0] * len(candidates)
+        for r in resp["rerank"]:
+            scores[r["index"]] = float(r["relevance_score"])
+        return scores
 
     def track_record(self, person_id: str) -> tuple[int, int]:
         """(kept, total) commitments in the person's own log: one filters aggregation over main."""
@@ -448,6 +472,9 @@ class LocalStore:
         rows = db.conn().execute("SELECT doc FROM evidence").fetchall()
         found = [Evidence(**json.loads(r["doc"])) for r in rows]
         return [e for e in found if e.kind == "researched" and e.question][:50]
+
+    def question_match(self, question: str, candidates: list[str]) -> list[float]:
+        return []  # no inference here; the caller compares wording instead
 
     def index_runs(self, branch, outcome, dates: list[str]) -> None:
         return None  # the local stand-in keeps no multiverse; callers fall back to numpy

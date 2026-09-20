@@ -7,7 +7,7 @@
 // weeks, months, decades), and each step keeps a minimum length so "tonight" is never a speck.
 
 import { scaleOf } from '../derive'
-import { belongsOnLine, isByYear, stepDate, yearOf } from '../format'
+import { belongsOnLine, dayLabel, yearOf } from '../format'
 import type { Basis, BranchView, BranchYear, Horizon, LifeEvent, Scenario } from '../types'
 
 export const PAST_PX_PER_YEAR = 58
@@ -123,7 +123,12 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
   // a decision made inside another branch brings that branch along as context, on the right
   const contextId = focus?.assuming_branch_id ?? null
   const rightCount = (focus ? focus.branch_ids.filter((id) => byId.get(id)?.branch.status !== 'merged').length : 0) + (contextId ? 1 : 0)
-  const gap = Math.max(92, Math.min(164, (opts.width * 0.6) / (Math.ceil(rightCount / 2) + 0.5)))
+  // Wide enough to read as separate paths, close enough that each one still has room for its name.
+  // The trunk sits at 0.36 of the free width (see Line's `origin`) and a name wants about 230px beside
+  // its path; where there is no room for that on the left, the fan leans right rather than lose names.
+  const lean = opts.width * 0.36 - 230 < 72
+  const room = lean ? 164 : Math.max(72, opts.width * 0.36 - 230)
+  const gap = Math.max(72, Math.min(164, room, (opts.width * 0.42) / ((lean ? rightCount : Math.ceil(rightCount / 2)) + 0.5)))
 
   const lanes: Lane[] = []
   const forks: LineLayout['forks'] = []
@@ -141,7 +146,9 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
     // the fan's slots: a step either side of the line this decision grew from, in the order the paths
     // are listed. Nothing is ever given the middle — that belongs to the trunk, and to a path chosen.
     const fan = scenario.branch_ids.map((id) => byId.get(id)).filter((v): v is BranchView => !!v && v.years.length > 0 && v.branch.status !== 'merged')
-    const order = Array.from({ length: fan.length }, (_, k) => (k % 2 === 0 ? 1 : -1) * (Math.floor(k / 2) + 1)).sort((a, b) => a - b)
+    const order = lean
+      ? Array.from({ length: fan.length }, (_, k) => k + 1)
+      : Array.from({ length: fan.length }, (_, k) => (k % 2 === 0 ? 1 : -1) * (Math.floor(k / 2) + 1)).sort((a, b) => a - b)
     const slots = new Map(fan.map((v, k) => [v.branch.id, order[k]]))
     scenario.branch_ids.forEach((id) => {
       const view = byId.get(id)
@@ -217,19 +224,18 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
         return { index, solidity: certain ? 1 : step.solidity, hidden: index >= endS, d: pathThrough(sample(pos, index, index >= endS ? index + 1 : to)) }
       })
 
-      const byYear = isByYear(view.years)
       const nodes: LaneNode[] = []
       view.years.forEach((step, index) => {
         step.events.forEach((e, n) => {
           const s = index + (0.35 + (0.5 * (n + 1)) / (step.events.length + 1))
           if (s > endS) return
-          nodes.push({ id: e.id, kind: 'event', step: index, at: pos(s), normal: normalAt(pos, s), label: e.text, caption: stepDate(step.at, byYear), basis: basisOf(e), event: e, head: !!(e.head ?? e.payload?.head) })
+          nodes.push({ id: e.id, kind: 'event', step: index, at: pos(s), normal: normalAt(pos, s), label: e.text, caption: '', basis: basisOf(e), event: e, head: !!(e.head ?? e.payload?.head) })
         })
       })
       for (const c of view.branch.commits) {
         const index = Math.max(0, view.years.findIndex((y) => y.at >= c.at || y.year >= c.year))
         const s = index + 0.12
-        if (s <= endS) nodes.push({ id: c.id, kind: 'commit', step: index, at: pos(s), normal: normalAt(pos, s), label: c.message, caption: stepDate(view.years[index].at, byYear), basis: 'background' })
+        if (s <= endS) nodes.push({ id: c.id, kind: 'commit', step: index, at: pos(s), normal: normalAt(pos, s), label: c.message, caption: dayLabel(c.at), basis: 'background' })
       }
 
       const labelS = merged ? (rejoinS ?? 1) / 2 : Math.min(endS - 0.1, sWhere(isFocus ? 150 + Math.round(Math.abs(slot)) * 58 : 40))
@@ -265,12 +271,11 @@ export function layoutRare(lane: Lane, years: BranchYear[]): RareLane {
     return { x: p.x + lane.side * (52 * smooth(d / 120) + Math.sin(d / 47) * 6), y: p.y }
   }
   const total = Math.min(years.length, lane.endS)
-  const byYear = isByYear(years)
   const nodes: LaneNode[] = []
   years.slice(0, Math.ceil(total)).forEach((step, index) =>
     step.events.forEach((e, n) => {
       const s = index + (0.35 + (0.5 * (n + 1)) / (step.events.length + 1))
-      nodes.push({ id: e.id, kind: 'event', step: index, at: pos(s), normal: normalAt(pos, s), label: e.text, caption: stepDate(step.at, byYear), basis: basisOf(e), event: e })
+      nodes.push({ id: e.id, kind: 'event', step: index, at: pos(s), normal: normalAt(pos, s), label: e.text, caption: '', basis: basisOf(e), event: e })
     }),
   )
   return { d: pathThrough(sample(pos, 0.25, total)), nodes, labelAt: pos(Math.min(total, 2.6)) }

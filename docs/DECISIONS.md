@@ -298,6 +298,58 @@ page in about seven seconds; a blocked page fell through to a breadcrumb as desi
    branch against its siblings" is a `significant_terms` aggregation and the rarest life comes
    from `rare_terms`.
 
+### 4.2a Jina models through the Elastic Inference Service — *built*
+**Decision.** Both `semantic_text` fields embed with `.jina-embeddings-v5-text-small` (1024-dim)
+instead of `.multilingual-e5-small-elasticsearch` (384-dim), and every hybrid query adds a third
+stage: a `text_similarity_reranker` running `.jina-reranker-v3.5` over the fused window. Both
+endpoints are preconfigured on the cluster by the Elastic Inference Service — no extra key, no
+cold start. `backend/scripts/reindex_semantic.py` did the migration the mapping change requires.
+
+**Why, and what it actually bought.** Not the reordering. The reranker returns a *calibrated*
+score, where RRF returns only a rank, and one place in this system needed exactly that: the
+decision to reuse a stored figure rather than crawl for it again. That gate was Jaccard word
+overlap ≥ 0.6 (`research.py`), which in practice passed only a verbatim repeat of an earlier
+question — every rephrasing paid for a fresh crawl out of a 75-second budget. It is now the
+cross-encoder reading the two questions against each other, above `HEREAFTER_REUSE_THRESHOLD`.
+Measured on the demo evidence base: rephrasings +0.21…+0.71, unrelated questions −0.10…−0.16,
+7/7 correct against 3/7 for the gate it replaced. Table in `docs/ELASTICSEARCH.md`.
+
+**Stated honestly.** On the *life log* the rerank is close to free but close to pointless — the
+demo person has nine events on main, so there is nothing to reorder. It will matter as a log
+grows; today it earns its place on the shared evidence base.
+
+**Rejected.** Raising the Jaccard threshold or hand-tuning synonyms (guesses at meaning, in
+application code, which is what the retrieval layer is for). Dropping the reuse gate entirely
+and trusting retrieval rank (a top hit is always returned, however wrong; that would put a
+number the simulator trusts behind an event it does not describe).
+
+### 4.2b The retrieval agent runs on Elastic Agent Builder — *built, behind a switch*
+**Decision.** The thing that decides which life-log queries answer "who is this person now" can
+be Elastic's own agent. Five tools and one agent are registered on the cluster by
+`backend/scripts/agent_builder_setup.py`; `HEREAFTER_STATE_PLANNER=elastic` puts it in charge,
+`llm` keeps the in-process planner, `rules` uses no model. An unreachable agent falls through to
+the next planner rather than failing the request.
+
+**The line that did not move.** The agent chooses queries; it does not say what events mean. Its
+tool *calls* are read out of the converse response and re-run against `store`, and its own
+results are discarded, so `reduce_events` still receives typed `LifeEvent`s and is still plain
+code. This is decision 2.1 applied to retrieval: a model may choose what to look at, never what
+is true.
+
+**Default is `llm`, and why.** On the demo log the Elastic agent takes 42 s and 4 LLM calls where
+the in-process planner takes 9 s, for the same state vector, and `/trunk` is on first load. The
+capability is real and one env var away; making it the default would make the app four times
+slower to open in exchange for nothing the user can see.
+
+**Rejected.** `index_search` tools (they take only a natural-language query, so they read across
+every person in the index — the first run proved it, with the agent writing `person_id demo` into
+the query text to compensate; every tool is now ES|QL with `?person_id` as a parameter it cannot
+opt out of). Letting the agent return the events themselves rather than replaying its queries
+(prose about events instead of events, and a model back inside the meaning).
+
+**Bonus, free.** The same five tools are served over Agent Builder's MCP endpoint, so an MCP
+client can ask the life log and the multiverse questions with no code from us.
+
 ### 4.3 Composio — *not built*
 Passive calendar events onto main. First thing cut, per the original spec; "tell Hereafter
 something" covers it.
@@ -460,6 +512,23 @@ Bands meet decision circles flush, every end is finished (capped, tapered into m
 junction), no hollow cross-sections, no ribbed or stacked translucent meshes, the HEAD ring and
 event inlays sit exactly on the band, the figure stands on the centreline. Verified with close-up
 screenshots of every join and end, not from overview distance.
+
+### 1.9 The real you and the ghost — *building*
+**Decision.** Two figures. The real you stays on main at now and moves only when a merge makes a
+choice real. A single ghost does all the exploring — walking, committing, reverting, branching,
+deleting — and every branch and every commit inside it is an alternative universe the ghost
+visits. On a merge the two meet: the ghost's first step becomes real and the ghost comes home to
+the new now. The left rail is reality (a decision started there forks from now); the right rail
+is the future the ghost is in (a decision started there forks where the ghost stands).
+**Why.** It puts the product's central asymmetry into the world itself rather than into copy: the
+present is a place you occupy and cannot leave, futures are places you visit.
+
+### 5.12 Deleted: rarest life, evidence drawer, picked moments, written narration — *done*
+The person's verdict: the rarest life was "not helpful", the evidence drawer and picked moments
+"not being used", and generated prose "too much reading". All four are gone from both halves,
+including `/lives`, `/chapters`, `/narration` and `/carry`, the story bible and the per-event
+narration. A step now shows its own plain line. Where a number came from is still traceable: a
+source link in a probability breakdown opens the page it was read from.
 
 ---
 

@@ -29,6 +29,8 @@ export interface RibbonState {
   end?: number // where it ends: a rounded nose
   slim?: number // 0..1: a branch you are not on draws in, thinner
   thick?: number
+  /** its end rests on a platform: no tapered nose there, and it swells back to full body as it arrives */
+  land?: boolean
 }
 
 export function createRibbon(count: number): THREE.BufferGeometry {
@@ -89,10 +91,13 @@ export function writeRibbon(g: THREE.BufferGeometry, s: RibbonState) {
     // finished ends: a rounded nose at a true end, a taper to nothing where the stone gives out
     const toEnd = end - d
     const fromStart = d - start
-    const capE = toEnd <= 0 ? 0 : toEnd < nose ? Math.sqrt(1 - Math.pow(1 - toEnd / nose, 2)) : 1
+    const capE = toEnd <= 0 ? 0 : s.land ? 1 : toEnd < nose ? Math.sqrt(1 - Math.pow(1 - toEnd / nose, 2)) : 1
     const capS = start < 0 ? 1 : fromStart <= 0 ? 0 : fromStart < nose ? Math.sqrt(1 - Math.pow(1 - fromStart / nose, 2)) : 1
     const cap = Math.min(capE, capS)
-    const body = (0.22 + 0.78 * smooth(0.06, 0.6, built)) * (0.35 + 0.65 * fade)
+    const thin = (0.22 + 0.78 * smooth(0.06, 0.6, built)) * (0.35 + 0.65 * fade)
+    // a path that ends somewhere arrives at full width: the last stretch swells back into its platform,
+    // and the blunt cut at `end` is hidden under the stone. Paleness still says how sure it is.
+    const body = s.land ? thin + (1 - thin) * smooth(end - 2.4, end - 0.2, d) : thin
     const half = (s.width / 2) * (1 - 0.4 * (s.slim ?? 0)) * breathe * body * cap
     const thick = T * Math.min(1, 0.45 + s.width * 0.55) * (0.1 + 0.9 * smooth(0.2, 0.6, built)) * cap
     const rx = Math.cos(h) * Math.cos(roll)

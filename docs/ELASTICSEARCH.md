@@ -1,13 +1,22 @@
 # Elasticsearch in Hereafter — technical README
 
-Hereafter uses Elastic Cloud (serverless, Elasticsearch 9.6) as three things at once: the
-immutable **life log**, the **evidence base** that research accumulates into, and the
-**multiverse** — every simulated life — so that "what is distinctive about this path" and "what
-is rare here" are aggregations rather than application code.
+Elastic Cloud Serverless, Elasticsearch 9.6. Three indices, one Agent Builder agent, five
+registered tools, two Elastic Inference Service endpoints.
 
-All Elasticsearch code is in one file: [`backend/app/store.py`](../backend/app/store.py),
-class `ElasticStore`. A `LocalStore` (SQLite) with the same method surface is used when
-`ELASTICSEARCH_URL` is unset, which is how the test suite and the "no credentials" mode run.
+All Elasticsearch query code is in one file, [`backend/app/store.py`](../backend/app/store.py),
+class `ElasticStore`. Agent Builder registration and the converse call are in
+[`backend/app/agent_builder.py`](../backend/app/agent_builder.py). A `LocalStore` (SQLite) with
+the same method surface is used when `ELASTICSEARCH_URL` is unset; the test suite runs that way.
+
+## Who issues queries
+
+| Component | Talks to the cluster | How |
+|---|---|---|
+| `backend/app/store.py` | Yes | The only ES client in the application. Every application query goes through it. Called from `state.py`, `scenarios.py`, `jev.py`, `research.py`, `branches.py`, `main.py`. |
+| `backend/app/llm.py` (OpenAI) | **No** | No store import, no client, no credentials. `plan_queries` returns a typed `PlannedQuery` (`tool` ∈ {`latest_in_domain`, `domain_histogram`, `hybrid_search`}, plus `domain` or `text`, plus `reason`). Python validates it and runs the query. |
+| Agent Builder agent | Yes, server-side | Runs its own ES\|QL tools on the cluster, driven by `.anthropic-claude-5-sonnet-chat_completion` hosted on Elastic. `agent_builder.plan` reads its tool *calls* and discards its results; the queries are re-run through `store`. |
+| Elasticsearch itself | n/a | Calls the Jina inference endpoints at index time (`copy_to` → `semantic_text`) and at query time (`semantic` clause, `text_similarity_reranker`). |
+| `backend/scripts/*` | Yes | Setup and reindex only. |
 
 ## Configuration
 
@@ -15,108 +24,257 @@ class `ElasticStore`. A `LocalStore` (SQLite) with the same method surface is us
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ELASTICSEARCH_URL` | — | Elastic Cloud endpoint. Unset → `LocalStore`. |
-| `ELASTICSEARCH_API_KEY` | — | API key. |
-| `HEREAFTER_ES_INDEX` | `hereafter-life-events` | Life log. |
-| `HEREAFTER_ES_EVIDENCE_INDEX` | `hereafter-evidence` | Evidence base. |
-| `HEREAFTER_ES_RUNS_INDEX` | `hereafter-runs` | Simulated lives. |
-| `HEREAFTER_ES_INFERENCE_ID` | `.multilingual-e5-small-elasticsearch` | Preconfigured dense-embedding inference endpoint behind the `semantic_text` fields. |
+| `ELASTICSEARCH_URL` | — | Cluster endpoint. Unset → `LocalStore`. |
+| `ELASTICSEARCH_API_KEY` | — | API key. Also authenticates the Kibana Agent Builder API. |
+| `HEREAFTER_ES_INDEX` | `hereafter-life-events-v2` | Life log. |
+| `HEREAFTER_ES_EVIDENCE_INDEX` | `hereafter-evidence-v2` | Evidence base. |
+| `HEREAFTER_ES_RUNS_INDEX` | `hereafter-runs` | Simulation output. |
+| `HEREAFTER_ES_INFERENCE_ID` | `.jina-embeddings-v5-text-small` | Embedding endpoint behind `semantic_text`. 1024 dimensions, cosine. |
+| `HEREAFTER_ES_RERANK_ID` | `.jina-reranker-v3.5` | Cross-encoder. Empty string disables the rerank stage. |
+| `HEREAFTER_REUSE_THRESHOLD` | `0.2` | Rerank score above which stored research is reused instead of re-crawled. |
+| `HEREAFTER_STATE_PLANNER` | `llm` | `elastic` \| `llm` \| `rules`. Who chooses the state-building queries. |
+| `HEREAFTER_STATE_PLANNER_TIMEOUT` | `120` | Seconds for the Agent Builder converse call. |
 
-Client: `elasticsearch` Python client 9.x, `request_timeout=60`, `retry_on_timeout`, two retries.
-Bulk writes use a 300 s timeout because the first write after a quiet spell waits for the
-embedding model to wake. Indices are created on first start if missing; `GET /health` reports
-`"store": "elastic"` when this path is active.
+Client: `elasticsearch` 9.x, `request_timeout=60`, `retry_on_timeout`, `max_retries=2`. Bulk
+writes use `request_timeout=300`. Indices are created on first start if missing. `GET /health`
+reports `"store": "elastic"` when this path is active.
 
-## Index 1 — `hereafter-life-events`: the life log
+Both inference endpoints are preconfigured on the cluster by the Elastic Inference Service:
+hosted by Elastic, no separate API key, no cold start.
 
-One document per event, for real events (`branch_id: "main"`) and for the visible events of
-simulated paths (`branch_id: <branch id>`).
+Switching embedding model requires a reindex — `semantic_text` fixes its `inference_id` in the
+mapping. [`backend/scripts/reindex_semantic.py`](../backend/scripts/reindex_semantic.py) creates
+`<index>-v2`, reindexes with a script that strips the semantic fields so `copy_to` regenerates
+them, keeps document ids, deletes nothing, and prints the `.env` lines to switch over. Dry run by
+default; `--go` to execute.
+
+## Index 1 — `hereafter-life-events-v2`
+
+One document per event. Real events are `branch_id: "main"`; a simulated path's visible events
+carry that path's id.
 
 ```
 id, person_id, source, branch_id, domain, event_type, origin   keyword
-date                                                            date
-confidence                                                      float
-payload                                                         object, enabled: false (stored, not indexed)
-text                                                            text, copy_to → text_semantic
-text_semantic                                                   semantic_text (inference_id = e5-small)
+date                                                           date
+confidence                                                     float
+payload                                                        object, enabled: false
+text                                                           text, copy_to → text_semantic
+text_semantic                                                  semantic_text (jina-embeddings-v5-text-small)
 ```
 
-| What | How | Where |
+### Append-only writes
+
+`append` issues a bulk `create` (`op_type=create`, `raise_on_error=False`, `refresh="wait_for"`).
+An id that already exists is rejected and returned to the caller as rejected; the stored document
+is unchanged. Event ids are deterministic hashes of their content, so re-offering the same file
+is a no-op. There is no update call anywhere in the codebase, and the HTTP API exposes no PUT,
+PATCH or DELETE on main.
+
+### Retrieval — `_fuse`, used by `hybrid_search`
+
+Three stages, each falling back to the previous one on failure:
+
+1. `text_similarity_reranker` — `inference_id` = `.jina-reranker-v3.5`, `field: "text"`,
+   `rank_window_size = max(4 × size, 20)`.
+2. `rrf` retriever, `rank_window_size: 50`, fusing:
+   - `standard` — BM25 `match` on `text`
+   - `standard` — `semantic` query on `text_semantic`
+   
+   both with `filter` on `person_id` and `branch_id`.
+3. BM25 alone.
+
+Falls back to stage 2 if no rerank endpoint is configured, and to stage 3 if RRF or the
+inference endpoint is unavailable. Each fallback is logged.
+
+### Aggregations
+
+| Method | Aggregation | Used for |
 |---|---|---|
-| **The past cannot be edited** | Every write is a bulk `create` (`op_type=create`, `raise_on_error=False`): an id that already exists is left exactly as it was and reported back as rejected. There is no update anywhere in the code. Event ids are deterministic hashes, so offering the same file twice never duplicates. | `append` |
-| **Hybrid retrieval** | An `rrf` retriever fusing two `standard` retrievers — BM25 `match` on `text`, and a `semantic` query on `text_semantic` — both filtered by `person_id` and `branch_id`. If the inference endpoint or RRF is unavailable it falls back to BM25 and logs it. | `hybrid_search` |
-| **Agentic state building** | To work out "who you are now", an agent *chooses* which of three tools to run — `latest_in_domain` (filtered, sorted by date), `domain_histogram` (`date_histogram` by year with a nested `terms` on `event_type`, plus a top-level `terms`), `hybrid_search` — plans again from what is still unknown, and logs every choice (`AgentStep`). The planner is the LLM when it is on, a rules planner otherwise; what the retrieved events *mean* is plain code, as is reconciling conflicting sources by recency × confidence. Returned on `GET /trunk` as `agent_log` and `reconciliation`. | `backend/app/state.py` |
-| **Context for decisions and narration** | When a decision is created, hybrid search pulls the real events most relevant to the situation (so nothing already known is asked again); each chapter pulls a few real events for callbacks. | `scenarios.py`, `chapters.py` |
-| **The person's own track record** | One `filters` aggregation over main (`goal_kept` vs `goal_kept`+`goal_dropped`), used as a personal base rate only when there are at least five. | `track_record` |
-| **Inventory / forget / erase** | `terms` on `source`; `terms` on `origin` with a `max` date sub-aggregation (what each upload contributed); `delete_by_query` by `origin` (forget one upload) or by `person_id` across all three indices (erase). These are the only deletions in the system and only the owner's token can trigger them. | `counts_by_source`, `origins`, `forget`, `erase` |
+| `domain_histogram` | `date_histogram` on `date`, `calendar_interval: year`, with a nested `terms` on `event_type`, plus a top-level `terms` | Activity density; the agent's "pace over time" tool |
+| `track_record` | `filters` — `goal_kept` vs `goal_kept ∪ goal_dropped` | Personal base rate, used only at n ≥ 5 |
+| `counts_by_source` | `terms` on `source` | `/inventory` |
+| `origins` | `terms` on `origin` with a `max` sub-aggregation on `date` and a `terms` on `source` | What each upload contributed |
 
-## Index 2 — `hereafter-evidence`: the evidence base
+### Deletions
 
-Every researched fact (from Browserbase, see `docs/BROWSERBASE.md`), every statistic behind a
-simulated event, and every real event used as a narrative callback.
+`forget(person_id, origin)` and `erase(person_id)` are `delete_by_query` with `conflicts="proceed"`,
+`refresh=True`. `erase` runs across all three indices. These are the only deletions in the system
+and require the owner's bearer token.
+
+## Index 2 — `hereafter-evidence-v2`
+
+Researched figures, statistics behind simulated events, and real events used as narrative
+callbacks. Written with `_op_type: index` (not `create`) — this is public fact, revisable.
 
 ```
-id, person_id, branch_id, kind, source_url     keyword        retrieved_at   date
+id, person_id, branch_id, kind, source_url     keyword     retrieved_at   date
 claim, snippet, question                       text, copy_to → claim_semantic
-claim_semantic                                 semantic_text
+claim_semantic                                 semantic_text (jina-embeddings-v5-text-small)
 source_title, used_for                         text
 value, unit, figure                            keyword, index: false
 ```
 
-- **Reuse before crawl.** Before anything is searched on the web, `remembered(question)` runs an
-  RRF hybrid query (BM25 on `question` + `semantic` on `claim_semantic`, filtered to
-  `kind: researched`) across *everyone's* earlier research — it is public fact, not personal
-  data — and a sufficiently similar question reuses the stored figure, quote and URL. The UI's
-  research feed shows this as "Found in memory". Research therefore accumulates across decisions.
-- **Retrieval for narration and the evidence drawer.** `search_evidence` is the same hybrid
-  query scoped to one person and path; `evidence` fetches by path or by ids.
+### `remembered(question)` — recall before crawl
 
-## Index 3 — `hereafter-runs`: the simulated lives
+Same three-stage retrieval as the life log, reranked on the `question` field, filtered to
+`kind: "researched"` and `exists: question`. Not scoped to a person: researched figures are
+public fact and are shared across everyone, so a question answered once is answered for all.
 
-After each simulation the sampler's result (1,000 lives × dated steps × possible events) is
-bulk-indexed in the background, one small keyword-only document per event occurrence
-(`person_id, scenario_id, branch_id, revision, run, step, at, event_key, domain, basis`), capped
-at 40,000 documents per path revision. No embeddings here — this index is for aggregation.
+### The reuse gate — `question_match` + `research.py:_best_recall`
 
-| Question | Aggregation | Endpoint |
-|---|---|---|
-| What is **distinctive** about this path compared with its siblings? | `significant_terms` on `event_key`; foreground = this path's current revision, `background_filter` = all paths of the same decision; `min_doc_count: 20`. | `GET /compare` → `distinctive` |
-| What is the **rarest** thing that happens here? | `rare_terms` on `event_key` (`max_doc_count: 100`), used to label the rarest coherent life. | `GET /lives?which=rare` |
+Retrieval returns candidates; it does not decide reuse. `question_match` calls
+`es.inference.rerank(inference_id=.jina-reranker-v3.5, query=<incoming question>, input=[<stored
+questions>])` and returns the scores. The highest-scoring candidate is reused only above
+`HEREAFTER_REUSE_THRESHOLD`.
 
-Both fall back to numpy when the bulk has not landed yet or on the local store. Superseded
-revisions stay in the index but never match, because every query filters on the current revision.
+Measured against the live evidence index:
 
-## What is live right now
+| Incoming question | Jaccard ≥ 0.6 (previous gate) | Rerank score | Outcome |
+|---|---|---|---|
+| how often do students who sleep badly get sick or exhausted | 0.12 — crawl | +0.24 | reuse 50% |
+| sleep deprivation health consequences for college students | 0.14 — crawl | +0.21 | reuse 14.7% |
+| how many software developers experience burnout | 0.08 — crawl | +0.35 | reuse 53% |
+| do Waterloo CS undergrads actually finish the degree | 0.15 — crawl | +0.30 | reuse 91.3% |
+| median one-bedroom rent in San Francisco | 0.00 — crawl | −0.16 | crawl |
+| how many university students own a car | 0.15 — crawl | −0.10 | crawl |
+| average commute time in Toronto | — crawl | −0.11 | crawl |
 
-On the project's cluster at the time of writing: `hereafter-life-events` 163 documents,
-`hereafter-evidence` 43, `hereafter-runs` 133,100.
+7/7 correct; the lexical gate it replaced scored 3/7 and passed only verbatim repeats. The
+separation band is 0.31 wide (lowest reuse +0.21, highest non-reuse −0.10).
 
-Verified against the live cluster: a rewrite of an existing event is rejected; "relocated to a
-new town for school" ranks a "moved to Waterloo" event first with no shared words (the dense side
-of the hybrid query doing its job); a figure researched for one decision was found in memory and
-not crawled again for the next; `significant_terms` returns distinctive events for demo paths.
+`question_match` returns `[]` when no reranker is configured or on `LocalStore`, and the caller
+falls back to the Jaccard comparison, so the no-credentials mode still runs.
 
-## Try it
+## Index 3 — `hereafter-runs`
 
-```bash
-# who-you-are-now, with the agent's logged query choices
-curl -s -H "Authorization: Bearer demo" "http://127.0.0.1:8642/trunk?person_id=demo" | jq '.agent_log, .reconciliation'
+Simulation output: 1,000 runs × dated steps × possible events, bulk-indexed in the background as
+one keyword-only document per event occurrence. Capped at 40,000 documents per path revision.
+No embeddings; this index exists for aggregation.
 
-# what is distinctive about each path of the demo's first decision (significant_terms)
-H='Authorization: Bearer demo'
-IDS=$(curl -s -H "$H" "http://127.0.0.1:8642/branches?person_id=demo" | python3 -c "
-import json,sys
-bs=[b['branch'] for b in json.load(sys.stdin)['branches']]
-two=[b for b in bs if b['scenario_id']==bs[0]['scenario_id']][:2]
-print('a=%s&b=%s' % (two[0]['id'], two[1]['id']))")
-curl -s -H "$H" "http://127.0.0.1:8642/compare?$IDS" | jq '.distinctive'
+```
+person_id, scenario_id, branch_id, event_key, domain, basis   keyword
+revision, run, step                                           integer
+at                                                            date
 ```
 
-## Limits, stated plainly
+Document id is `{branch_id}-{revision}-{run}-{step}-{event_key}`. Superseded revisions remain in
+the index and never match, because every query filters on the branch's current revision.
 
-- Event `text` in Elastic cannot be end-to-end encrypted, because search has to read it. It is
-  kept pseudonymous (random person ids, no names or emails in the index) and minimal.
-- `payload` is stored but not indexed; anything that needs filtering is a top-level keyword.
-- Evidence a person's research added to the shared index is removed when they erase themselves.
-- The 40,000-document cap per path revision means very eventful long paths are sampled, not
-  exhaustive, for the two aggregations.
+| Aggregation | Parameters | Endpoint |
+|---|---|---|
+| `significant_terms` on `event_key` | foreground = this path at its current revision; `background_filter` = that path plus all siblings of the same decision; `size: 5`, `min_doc_count: 20` | `GET /compare` → `distinctive` |
+| `rare_terms` on `event_key` | `max_doc_count: 100` | `GET /lives?which=rare` |
+
+Both return `None` on `LocalStore` or when the background bulk has not landed, and the caller
+falls back to numpy over the in-memory result.
+
+## Agent Builder
+
+[`backend/scripts/agent_builder_setup.py`](../backend/scripts/agent_builder_setup.py) registers
+five tools and one agent, idempotently (`--remove` deletes them). The agent holds tool
+references, so setup deletes and rebuilds the agent around the tool writes.
+
+| Tool | Type | Query |
+|---|---|---|
+| `hereafter.latest_in_domain` | esql | `WHERE person_id == ?person_id AND branch_id == "main" AND domain == ?domain \| SORT date DESC \| LIMIT 10` |
+| `hereafter.domain_histogram` | esql | `EVAL year = DATE_FORMAT("yyyy", date) \| STATS events = COUNT(*) BY year, event_type` |
+| `hereafter.search_life_events` | esql | `METADATA _score \| WHERE person_id == ?person_id AND match(text_semantic, ?query) \| SORT _score DESC \| LIMIT 8` |
+| `hereafter.recall_evidence` | esql | `METADATA _score \| WHERE kind == "researched" AND match(claim_semantic, ?query) \| SORT _score DESC \| LIMIT 8` |
+| `hereafter.distinctive_events` | esql | `WHERE branch_id == ?branch_id \| STATS lives = COUNT(*) BY event_key \| SORT lives DESC` |
+
+Two implementation notes:
+
+- **All five are ES\|QL, none is `index_search`.** An `index_search` tool accepts only a natural
+  language query and applies no filter, so it reads across every person in the index. In the
+  first run with one, the agent detected results it could not attribute and began inserting
+  `person_id demo` into the query *text* to compensate. `?person_id` as an ES\|QL parameter is a
+  filter the agent cannot omit.
+- **`SORT` precedes `KEEP`.** `KEEP` drops `_score`, and sorting on it afterwards fails with
+  `Unknown column [_score]`.
+
+### The planner
+
+`HEREAFTER_STATE_PLANNER=elastic` routes `state.py`'s query planning to the agent.
+`agent_builder.plan` POSTs to `/api/agent_builder/converse`, then walks `steps`:
+
+- `type: "reasoning"` steps carry `tool_call_group_id` and the model's reasoning for that round.
+- `type: "tool_call"` steps carry `tool_id`, `params`, and the same group id.
+
+Tool calls are mapped through `TOOL_TO_STORE` to store methods and keyword arguments
+(`person_id` is dropped — `store` takes it separately; `query`/`nlQuery` become `text`). Tools
+with no store equivalent are logged and skipped. The reasoning from each group is attached to
+that group's queries, so `AgentStep.reason` on `GET /trunk` carries the agent's own explanation
+and `AgentStep.planner` reads `elastic`.
+
+**The agent's own tool results are discarded.** Only its choices are used; the queries are
+re-executed through `store` so `state.reduce_events` receives typed `LifeEvent` objects. Any
+failure — unreachable cluster, no tool calls, malformed response — returns `None` and the caller
+falls through to the `llm` planner, then the `rules` planner.
+
+Measured on the demo log:
+
+| Planner | Wall time | LLM calls | Result |
+|---|---|---|---|
+| `elastic` | 42 s | 4 | identical state vector |
+| `llm` | 9 s | — | identical state vector |
+
+Default is `llm`; `/trunk` is on first load. An earlier version of the agent took 80 s and 21 LLM
+calls, most of it the `index_search` tool generating its own queries and the agent re-searching
+slots that were legitimately empty.
+
+### MCP
+
+The same five tools are served over `/api/agent_builder/mcp` (41 tools total on the endpoint,
+including Elastic's built-ins):
+
+```bash
+KB=${ELASTICSEARCH_URL/.es./.kb.}
+curl -s -X POST -H "Authorization: ApiKey $ELASTICSEARCH_API_KEY" -H "kbn-xsrf: true" \
+  -H "Accept: application/json, text/event-stream" "$KB/api/agent_builder/mcp" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+## Current state of the cluster
+
+```
+hereafter-life-events-v2      634 docs
+hereafter-evidence-v2         136 docs
+hereafter-runs            444,037 docs
+```
+
+Verified against the live cluster:
+
+- A bulk `create` against an existing event id is rejected; the stored document is unchanged.
+- `"relocated to a new town for school"` returns `"moved from Mississauga to Waterloo for
+  university"` (1.212) then `"began a computer science degree at Waterloo"` (0.946) — no terms in
+  common with the query.
+- The reuse gate scores 7/7 on the table above.
+- `significant_terms` returns distinctive event keys for the demo paths.
+- The Agent Builder planner produces the same state vector as the `llm` planner.
+
+Scope note: the demo person has 9 events on `branch_id: "main"`. Rerank quality on the life log
+is not meaningfully measurable at that size; the measured gain is on the evidence index.
+
+## Limits
+
+- Event `text` cannot be encrypted at rest, because retrieval reads it. The index is
+  pseudonymous: random person ids, no names or emails.
+- `payload` is `enabled: false` — stored, not indexed. Anything needing a filter is a top-level
+  keyword field.
+- Evidence contributed by a person is removed when that person erases themselves, including from
+  the shared pool.
+- The 40,000-document cap per path revision means very long paths are sampled, not exhaustive,
+  for the two `hereafter-runs` aggregations.
+
+## Reproduce
+
+```bash
+cd backend
+.venv/bin/python -m scripts.reindex_semantic              # dry run; --go to execute
+.venv/bin/python -m scripts.agent_builder_setup           # register tools + agent; --remove to delete
+.venv/bin/python -m pytest -q                             # 104 tests, LLM off, LocalStore
+
+# the agent's logged query choices and the reconciliation rulings
+curl -s -H "Authorization: Bearer demo" "http://127.0.0.1:8642/trunk?person_id=demo" \
+  | jq '.agent_log, .reconciliation'
+```

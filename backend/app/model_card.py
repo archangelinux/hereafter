@@ -46,13 +46,13 @@ STEPS = [
              "which direction, copies figures out of pages (checked in code), and writes the narrative around the sampled skeleton. "
              "It never supplies a probability or the size of any effect, and it never decides what happens."},
     {"title": "6. Four measures, as change from now",
-     "text": "Every path tracks health, joy (short-term happiness), fulfilment (the long-term kind) and money as a DIFFERENCE from "
+     "text": "Every path tracks health, joy (short-term happiness), fulfilment (the long-term kind) and finance as a DIFFERENCE from "
              "where you are now — now is zero; there is no absolute score. When an event is proposed it is given an effect on each, "
              "an integer from −2 to +2 and zero for most: a judgement about what that moment means if it happens, never about "
              "whether it happens. Inside each simulated life the effects of what actually happened are added up step by step: joy "
-             "is a pulse that fades within days; health persists and fades slowly; fulfilment and money stay. What is shown is the "
+             "is a pulse that fades within days; health persists and fades slowly; fulfilment and finance stay. What is shown is the "
              "average of the thousand lives with the band that holds the middle four fifths of them, and at the end a mark from "
-             "−−− to +++. Money is the one exception to judgement: where your own words or a researched source give a real figure "
+             "−−− to +++. Finance is the one exception to judgement: where your own words or a researched source give a real figure "
              "(a salary, a rent, a loan), it runs through a separate ledger in currency from the day that moment happens, and is "
              "set against your income or net worth only if you chose to give them."},
 ]
@@ -86,8 +86,8 @@ def constants() -> list[dict]:
         {"name": "Effect scale", "value": "−2 … +2 per event and measure; 0 for most",
          "meaning": "A five-point judgement made when an event is proposed. Sourced only for money amounts that come from your words or a cited page."},
         {"name": "How long an effect lasts", "value": f"joy: half-life {outcomes.HALF_LIFE_DAYS['joy']:.0f} days; health: half-life "
-                                                      f"{outcomes.HALF_LIFE_DAYS['health'] / 365:.0f} years; fulfilment and money: no decay",
-         "meaning": "Hand-set. A good night fades in days; what wears you down or builds you up lingers; meaning and money stay."},
+                                                      f"{outcomes.HALF_LIFE_DAYS['health'] / 365:.0f} years; fulfilment and finance: no decay",
+         "meaning": "Hand-set. A good night fades in days; what wears you down or builds you up lingers; meaning and finance stay."},
         {"name": "Band around a measure", "value": f"{outcomes.BAND[0]}th–{outcomes.BAND[1]}th percentile of the simulated lives",
          "meaning": "The low and high shown beside each average."},
         {"name": "Marks", "value": "|change| ≥ " + ", ".join(f"{t:g}" for t in outcomes.MARK_THRESHOLDS) + " → one, two, three marks; “=” below the first",
@@ -111,7 +111,7 @@ LIMITS = [
     "Dependencies and their multipliers are hand-set and coarse.",
     "A thousand runs carry sampling noise of about one and a half percentage points around fifty percent.",
     "The four measures are not clinical and not financial advice. Their inputs are five-point judgements, so their size means "
-    "'more' or 'less', not an amount of health or happiness; only the money ledger is in real units, and only for the figures that are known.",
+    "'more' or 'less', not an amount of health or happiness; only finance is in real units, and only for the figures that are known.",
     "The narration is fiction written around a sampled skeleton. Its details are invented; only the events, dates and cited facts come from the model.",
 ]
 

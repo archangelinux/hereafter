@@ -9,8 +9,8 @@ export interface Faces {
 }
 
 export const stone = {
-  past: { top: '#E8D5C0', sideX: '#D9A588', sideZ: '#C9B8A3' },
-  open: { top: '#F1E7D8', sideX: '#DCC9B2', sideZ: '#C9B8A3' }, // pale stone, a step deeper than the sky so it reads; the shadow face is the spec's #C9B8A3,
+  past: { top: '#E3CBB0', sideX: '#CE9878', sideZ: '#BCA891' },
+  open: { top: '#EADCC8', sideX: '#D3BC9F', sideZ: '#BCA891' }, // pale stone, a step deeper than the sky so it reads; the shadow face is the spec's #C9B8A3,
   mist: { top: '#EDE4F0', sideX: '#E4D9E9', sideZ: '#DBCFE1' },
   ruin: { top: '#D8D3CC', sideX: '#C4BFB8', sideZ: '#B6B0A8' },
   cloud: { top: '#FFFEFC', sideX: '#FBF1EE', sideZ: '#F1E8EE' },

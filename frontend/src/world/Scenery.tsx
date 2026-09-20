@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { ink } from './palette'
-import { DS, MAIN_WIDTH, type Plaza, type WorldLayout } from './layout'
+import { ink, type StoneFamily } from './palette'
+import { along, DS, MAIN_WIDTH, type LaneSpec, type Plaza, type WorldLayout } from './layout'
 import { createRibbon, ribbonMaterial, writeRibbon } from './ribbon'
 import { haloTexture, plazaGeometry, puffGeometry, seedGeometry, softMaterial, swell } from './soft'
 
@@ -45,9 +45,9 @@ export function Plazas({ plazas, still, onHover, onPick }: { plazas: Plaza[]; st
       {plazas.map((p) => (
         <Bobbing key={p.id} at={[p.at.x, p.at.y + 0.02, p.at.z]} still={still}>
           <mesh
-            geometry={plazaGeometry(p.onMain || p.decided ? 'past' : 'open')}
+            geometry={plazaGeometry('past')}
             material={softMaterial(1)}
-            scale={[p.r, p.big ? 0.5 : 0.44, p.r]}
+            scale={[p.r, p.big ? 0.62 : 0.54, p.r]}
             renderOrder={4}
             onClick={(e) => {
               if (e.delta > 6 || !p.collapsed) return
@@ -59,6 +59,87 @@ export function Plazas({ plazas, still, onHover, onPick }: { plazas: Plaza[]; st
           />
         </Bobbing>
       ))}
+    </group>
+  )
+}
+
+/**
+ * The end of a path: a small platform, the same family of stone as the decision's circle it left, a
+ * size down. The figure walks to it, the path's name stands on it, and it is where the way could
+ * divide again. A road not taken ends in one too, in ruin stone, where it comes away.
+ */
+export function Ends({ lanes, still, onHover, onGo }: { lanes: LaneSpec[]; still: boolean; onHover: (id: string | null) => void; onGo: (laneId: string, step: number) => void }) {
+  return (
+    <group>
+      {lanes.map((l) => {
+        const p = along(l.samples, l.endD)
+        const family: StoneFamily = l.status === 'merged' ? 'past' : l.status === 'open' ? 'open' : 'ruin'
+        return (
+          <Bobbing key={l.id} at={[p.x, p.y + 0.02, p.z]} still={still}>
+            {/* a low landing, not a block: flat enough to stand on, a size down from a decision's circle */}
+            <mesh
+              geometry={plazaGeometry(family)}
+              // opaque, like every other piece of stone: a translucent one draws in the late pass and
+              // paints over the ghost whatever the depth says. Distance is told by colour, never by alpha.
+              material={softMaterial(1)}
+              scale={[l.endR, l.big ? 0.17 : 0.13, l.endR]}
+              renderOrder={4}
+              onClick={(e) => {
+                if (e.delta > 6) return
+                e.stopPropagation()
+                onGo(l.id, l.steps - 1) // walk me to the end of this path
+              }}
+              onPointerOver={(e) => (e.stopPropagation(), onHover(l.id), (document.body.style.cursor = 'pointer'))}
+              onPointerOut={() => (onHover(null), (document.body.style.cursor = ''))}
+            />
+          </Bobbing>
+        )
+      })}
+    </group>
+  )
+}
+
+// invisible, and wider than the dot it stands for: a dot this small is otherwise hard to hit
+const pickable = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+
+/**
+ * The steps before the end: one dot for each place the figure comes to rest on its way out, lying ON
+ * the band (never a peg through it). Coral behind the figure, dark ahead of it, so how far along the
+ * path you are is plain at a glance. Touching one sends the figure to that step.
+ */
+export function Stops({ lanes, still, activeId, hereStep, onGo }: { lanes: LaneSpec[]; still: boolean; activeId: string | null; hereStep: number | null; onGo: (laneId: string, step: number) => void }) {
+  return (
+    <group>
+      {lanes.map((l) => {
+        const on = l.id === activeId && hereStep !== null
+        const base = (l.big ? 0.22 : 0.12) * (l.width / (l.big ? 1 : 0.4))
+        return l.rests.slice(0, -1).map((rest, k) => {
+          const p = along(l.samples, rest.d)
+          // steps that fall close together get smaller dots rather than touching ones
+          const near = Math.min(k > 0 ? rest.d - l.rests[k - 1].d : 99, l.rests[k + 1].d - rest.d)
+          const here = on && rest.step === hereStep
+          const r = Math.max(0.06, Math.min(base, near * 0.4)) * (here ? 1.5 : 1)
+          const family: StoneFamily = on && rest.step <= hereStep! ? 'coral' : l.status === 'open' || l.status === 'merged' ? 'bark' : 'ruin'
+          return (
+            <Bobbing key={`${l.id}:${rest.step}`} at={[p.x, p.y + 0.015, p.z]} still={still}>
+              {/* depth in proportion to the dot, so it sits on the stone instead of hanging under it */}
+              <mesh geometry={plazaGeometry(family)} material={softMaterial(1)} scale={[r, r * 0.5, r]} renderOrder={4} />
+              <mesh
+                geometry={plazaGeometry('past')}
+                material={pickable}
+                scale={[Math.max(r * 2.4, 0.3), 0.04, Math.max(r * 2.4, 0.3)]}
+                onClick={(e) => {
+                  if (e.delta > 6) return
+                  e.stopPropagation()
+                  onGo(l.id, rest.step)
+                }}
+                onPointerOver={(e) => (e.stopPropagation(), (document.body.style.cursor = 'pointer'))}
+                onPointerOut={() => (document.body.style.cursor = '')}
+              />
+            </Bobbing>
+          )
+        })
+      })}
     </group>
   )
 }

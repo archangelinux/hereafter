@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import type { Api } from '../api'
 import { BasisMark } from '../page/marks'
 import { MEASURES, MeasuresBlock, WORDS, markTone } from './MeasuresBlock'
@@ -44,19 +44,14 @@ export function MergePanel(p: Props) {
   const [commitText, setCommitText] = useState('')
   const { scenario, paths, head } = p
   const [confirming, setConfirming] = useState(false)
-  const [typed, setTyped] = useState('')
   const [more, setMore] = useState(false) // narrow windows: the panel compacts to a bar; this opens the rest
   const [why, setWhy] = useState<string | null>(null)
-  useEffect(() => (setConfirming(false), setTyped('')), [head?.branch.id, head?.branch.status])
+  useEffect(() => setConfirming(false), [head?.branch.id, head?.branch.status])
   // a commit redraws the path; the tray starts empty again on the life that comes back
 
   const decided = paths.find((b) => b.branch.status === 'merged') ?? null
   const canMerge = !!head && head.branch.status === 'open' && !head.branch.forming && head.years.length > 0
   const label = head?.branch.label ?? ''
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    if (typed.trim() === label) p.onMerge(label)
-  }
   // most likely first. Until the backend sends probabilities, the agreement share of the last step stands in.
   const last = head?.years[head.years.length - 1]
   const pOf = (e: PossibleEvent) => e.probability ?? last?.outlook[e.key]?.probability ?? last?.outlook[e.key]?.share ?? null
@@ -115,9 +110,14 @@ export function MergePanel(p: Props) {
         {head?.branch.measures && <MeasuresBlock measures={head.branch.measures} step={p.step} person={p.person} />}
 
         {events.length > 0 && (() => {
-          // One at a time: the next thing that could happen where the ghost stands. The rest are
-          // there if asked for, but the panel is not a list of fifteen things.
-          const next = events.find((e) => !p.assumed.includes(e.key) && (e.probability ?? 0) < 0.999)
+          // One at a time: the next thing that could happen WHERE THE GHOST STANDS. Move along the path
+          // — a press, or a click on one of its circles — and this is the possibility of that point:
+          // one whose own moment takes in this step, else the next one still ahead of it.
+          const at = p.step ?? 0
+          const live = (e: PossibleEvent) => !p.assumed.includes(e.key) && (e.probability ?? 0) < 0.999
+          const next = events.find((e) => live(e) && e.window && at >= e.window[0] && at <= e.window[1])
+            ?? events.find((e) => live(e) && (!e.window || e.window[1] >= at))
+            ?? events.find(live)
           const mine = events.filter((e) => p.assumed.includes(e.key))
           return (
             <>
@@ -192,14 +192,13 @@ export function MergePanel(p: Props) {
       {p.notice && <p className="h-note">{p.notice}</p>}
       {p.error && <p className="h-note h-note--error">{p.error}</p>}
       {confirming && head && (
-        <form onSubmit={submit} className="h-panel h-merge__confirm">
-          <label htmlFor="merge-confirm">Type “{label}” and press Enter</label>
-          <input id="merge-confirm" className="h-input" autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setConfirming(false)} spellCheck={false} />
-          <div>
-            <button type="submit" className="h-primary" disabled={typed.trim() !== label || p.busy === 'merge'}>{p.busy === 'merge' ? 'Merging…' : 'Merge'}</button>
+        <p className="h-panel h-merge__confirm">
+          <span>Make “{label}” real on main? It can't be undone.</span>
+          <span>
+            <button type="button" className="h-primary" disabled={p.busy === 'merge'} onClick={() => p.onMerge(label)}>{p.busy === 'merge' ? 'Merging…' : 'Yes, merge'}</button>
             <button type="button" className="h-link" onClick={() => setConfirming(false)}>Cancel</button>
-          </div>
-        </form>
+          </span>
+        </p>
       )}
       <p className="h-dock__note">
         {decided ? `Merged: “${decided.branch.label}” is on main. What lies ahead on it is still a projection.` : !head ? 'Select a path to live it. HEAD moves there.' : "Records this choice on main. It can't be undone. The life you walked through stays a simulation."}

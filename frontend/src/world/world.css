@@ -224,6 +224,11 @@
   text-align: right;
 }
 
+/* a decision waiting as a circle: named like the rest, held back a step */
+.hw-tag--quiet .hw-tag__note {
+  color: #6e6558;
+}
+
 /* compact windows: the scene's words step down with the page's type; nothing under 12px */
 @media (max-width: 1320px), (max-height: 800px) {
   .hw-tag { font-size: 16px; }

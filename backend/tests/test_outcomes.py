@@ -37,8 +37,6 @@ def test_commit_patches_force_and_prevent():
     assert forced.shares[1, forced.keys.index("you_meet_for_coffee")] == 1.0
     prevented = simulate_outcomes("p", events, FIXTURE["steps"], 500, [{"step": 0, "prevent": ["regret_next_morning"]}])
     assert prevented.shares[-1, prevented.keys.index("regret_next_morning")] == 0.0
-
-
 def test_the_rare_life_is_eventful_and_unlike_the_typical_one():
     r = simulate_outcomes("p", FIXTURE["options"]["text_them"], FIXTURE["steps"], 1000)
     assert r.rare != r.typical and sum(len(step) for step in r.life(r.rare)) >= 2

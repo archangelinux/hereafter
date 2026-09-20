@@ -132,6 +132,7 @@ export function Band({ spec, fresh, leaving, active, dim, still, onGone, onHover
         slim: s.slim,
         start: spec.fromD > 0 ? spec.fromD : -1,
         end: Math.min(s.end, spec.fullLen),
+        land: true, // every path ends on its platform (see LaneSpec.endD)
       })
       writeRibbon(hitGeometry, { samples: s.shown, built: ONES(count), firm: () => 0, width: Math.max(1.5, spec.width * 2.2), sink: 0, phase: 0 })
       s.dirty = false
@@ -145,7 +146,7 @@ export function Band({ spec, fresh, leaving, active, dim, still, onGone, onHover
       s.gone = true
       onGone()
     }
-    s.lift = still ? 0 : THREE.MathUtils.damp(s.lift, hovered.current && !active ? 0.06 : 0, 5, dt) // a hovered branch lifts a little; the one you stand on stays put under your feet
+    s.lift = 0 // a branch never moves under the pointer: hovering only warms its colour
     const dimTarget = pale
     s.dimmed = still ? dimTarget : THREE.MathUtils.damp(s.dimmed, dimTarget, 3, dt)
 

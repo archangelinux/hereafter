@@ -28,7 +28,7 @@ It proposes what could happen, names the nearest studied group to look up, names
 
 ### 6. Four measures, as change from now
 
-Every path tracks health, joy (short-term happiness), fulfilment (the long-term kind) and money as a DIFFERENCE from where you are now — now is zero; there is no absolute score. When an event is proposed it is given an effect on each, an integer from −2 to +2 and zero for most: a judgement about what that moment means if it happens, never about whether it happens. Inside each simulated life the effects of what actually happened are added up step by step: joy is a pulse that fades within days; health persists and fades slowly; fulfilment and money stay. What is shown is the average of the thousand lives with the band that holds the middle four fifths of them, and at the end a mark from −−− to +++. Money is the one exception to judgement: where your own words or a researched source give a real figure (a salary, a rent, a loan), it runs through a separate ledger in currency from the day that moment happens, and is set against your income or net worth only if you chose to give them.
+Every path tracks health, joy (short-term happiness), fulfilment (the long-term kind) and finance as a DIFFERENCE from where you are now — now is zero; there is no absolute score. When an event is proposed it is given an effect on each, an integer from −2 to +2 and zero for most: a judgement about what that moment means if it happens, never about whether it happens. Inside each simulated life the effects of what actually happened are added up step by step: joy is a pulse that fades within days; health persists and fades slowly; fulfilment and finance stay. What is shown is the average of the thousand lives with the band that holds the middle four fifths of them, and at the end a mark from −−− to +++. Finance is the one exception to judgement: where your own words or a researched source give a real figure (a salary, a rent, a loan), it runs through a separate ledger in currency from the day that moment happens, and is set against your income or net worth only if you chose to give them.
 
 ## Every constant
 
@@ -46,7 +46,7 @@ Every path tracks health, joy (short-term happiness), fulfilment (the long-term 
 | Background fit band | ±25% in Canada, ±50% elsewhere | Each life scales each national-average hazard by its own factor in this band. |
 | Background | off by default (HEREAFTER_BACKGROUND=on); when on, at most about a quarter of visible events | National averages are weather, not plot. When on: long horizons only; marriage, children and buying a home appear only if your own words show they are wanted or already yours. |
 | Effect scale | −2 … +2 per event and measure; 0 for most | A five-point judgement made when an event is proposed. Sourced only for money amounts that come from your words or a cited page. |
-| How long an effect lasts | joy: half-life 10 days; health: half-life 2 years; fulfilment and money: no decay | Hand-set. A good night fades in days; what wears you down or builds you up lingers; meaning and money stay. |
+| How long an effect lasts | joy: half-life 10 days; health: half-life 2 years; fulfilment and finance: no decay | Hand-set. A good night fades in days; what wears you down or builds you up lingers; meaning and finance stay. |
 | Band around a measure | 10th–90th percentile of the simulated lives | The low and high shown beside each average. |
 | Marks | |change| ≥ 0.5, 1.5, 3 → one, two, three marks; “=” below the first | How the end-of-path change is summarised as − / = / +. |
 | USD to CAD | 1.37 | One fixed conversion for US pay and prices. |
@@ -66,5 +66,5 @@ Every path tracks health, joy (short-term happiness), fulfilment (the long-term 
 - Everything here is association, not cause. A shift does not mean your personality makes the event happen.
 - Dependencies and their multipliers are hand-set and coarse.
 - A thousand runs carry sampling noise of about one and a half percentage points around fifty percent.
-- The four measures are not clinical and not financial advice. Their inputs are five-point judgements, so their size means 'more' or 'less', not an amount of health or happiness; only the money ledger is in real units, and only for the figures that are known.
+- The four measures are not clinical and not financial advice. Their inputs are five-point judgements, so their size means 'more' or 'less', not an amount of health or happiness; only finance is in real units, and only for the figures that are known.
 - The narration is fiction written around a sampled skeleton. Its details are invented; only the events, dates and cited facts come from the model.

@@ -470,8 +470,12 @@ holds only the option's own events.
 main) and every `Chapter` carries `recap`; chapters are written in order (the next is only pre-written once the current one is
 ready), chapter one opens on step zero. Long paths chapter as: first month, rest of year one, then a year at a time.
 
-**Commits and nested decisions.** `POST /branches/{id}/commits` takes `{message, at|year}` or `{event_key, at}` ("assume this
-possibility happens": forced from `at`, or from the start of its window if later; message "<label> happens"; no LLM).
+**Commits and nested decisions.** `POST /branches/{id}/commits` takes `{message, at|year}` or `{event_keys, at}` ("assume these
+possibilities happen": each forced from `at`, or from the start of its own window if later; no LLM). Whatever a pinned possibility
+cannot happen without — its `requires`, and any `depends_on` with `relation: "requires"` — is pinned with it, no later than the
+thing that needs it; the message names them all ("<a>, <b> and <c> happen"). One commit holds the whole configuration: its patch
+carries `event_keys` and a `pins` list of `{step, model}`, it is dated at the first pin, and undoing it lets go of all of them.
+`{event_key}` (one key) is still accepted.
 `POST /scenarios` takes `assuming_at` with `assuming_branch_id`: the decision forks from that path's state at that date, carries what
 had already happened there as `Scenario.assumed_facts`, starts its branches at that date (`forked_at`), and returns `fork_at`.
 Undoing a commit dated on or before a nested decision's `fork_at` is refused with 409 and a plain reason.

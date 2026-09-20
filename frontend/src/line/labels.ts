@@ -37,7 +37,7 @@ const CHAR: Record<LabelKind, [top: number, text: number, max: number]> = {
   node: [6.2, 6.5, 36],
   commit: [6.2, 6.8, 36],
   rare: [0, 6.2, 30],
-  name: [6.2, 7.6, 30],
+  name: [6.2, 7.6, 24], // a long path name clips rather than going unplaced: the panel has it in full
   pick: [6.2, 6.5, 30],
   log: [6.2, 6.5, 38],
 }

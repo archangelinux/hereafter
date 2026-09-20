@@ -71,6 +71,14 @@ interface PathScript {
 function path(o: PathScript): BranchView {
   const fork = -(o.forkedDaysAgo ?? 0)
   const happened = new Set<string>()
+  // each possibility's own moment, as the backend sends it: from the step it could first fall in to
+  // the end of the path. The panel reads this to say what could happen WHERE THE READER IS STANDING.
+  const first = new Map<string, number>()
+  for (const b of o.beats) if (!first.has(b[2])) first.set(b[2], b[0])
+  const model: PossibleEvent[] = o.model.map((e) => {
+    const from = first.get(e.key) ?? 1
+    return { ...e, window: [from, Math.min(o.steps.length - 1, from + 4)] as [number, number] }
+  })
   const years: BranchYear[] = o.steps.map((days, i) => {
     const at = iso(fork + days)
     const events: LifeEvent[] = o.beats.filter((b) => b[0] === i).map(([, domain, key, text, basis, evidence], n) => {
@@ -84,13 +92,13 @@ function path(o: PathScript): BranchView {
     })
     const solidity = Math.round((o.solid[1] + (o.solid[0] - o.solid[1]) * Math.pow(0.5, i / o.solid[2])) * 1000) / 1000
     const outlook: Outlook = {}
-    for (const e of o.model) outlook[e.key] = { value: happened.has(e.key) ? 'yes' : 'not yet', share: solidity, words: e.words }
+    for (const e of model) outlook[e.key] = { value: happened.has(e.key) ? 'yes' : 'not yet', share: solidity, words: e.words }
     return { year: +at.slice(0, 4), at, label: on(fork + days), solidity, state: demoState, events, outlook }
   })
   return {
     branch: {
       id: o.id, person_id: PERSON_ID, label: o.label, forked_at: iso(fork), assumption: {}, precondition: null, status: o.status ?? 'open', carried_event_id: null,
-      scenario_id: o.scenario, option_id: o.option, commits: [], research: 'done', revision: 1, model: { events: o.model }, forming: false,
+      scenario_id: o.scenario, option_id: o.option, commits: [], research: 'done', revision: 1, model: { events: model }, forming: false,
     },
     years,
   }

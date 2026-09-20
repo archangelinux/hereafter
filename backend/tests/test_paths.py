@@ -6,7 +6,7 @@ import numpy as np
 
 from app import llm, outcome_model
 from app.models import Horizon
-from app.sim.outcomes import simulate_outcomes, step_dates, step_offsets, window_from_days
+from app.sim.outcomes import marks, measures, simulate_outcomes, step_dates, step_offsets, window_from_days
 
 DEMO = {"person_id": "demo"}
 START = date(2026, 9, 19)
@@ -121,47 +121,6 @@ def test_every_demo_life_reads_in_order(client):
 
 
 # --- F. coherent narration ---
-
-def test_chapters_share_a_story_bible_and_pick_up_from_the_one_before(client, monkeypatch):
-    from app import chapters, db
-
-    branch, years = db.get_branch(next(v for v in client.get("/branches", params=DEMO).json()["branches"]
-                                       if v["branch"]["label"] == "Take the offer")["branch"]["id"])
-    seen, bibles = [], []
-
-    def bible(context):
-        bibles.append(context)
-        return llm.StoryBible(setting="a payments-infrastructure team on the fourth floor of a former warehouse",
-                              neighbourhood="a shared flat two blocks from a train line",
-                              people=[llm.BiblePerson(name="Dario", role="the teammate who sits opposite"),
-                                      llm.BiblePerson(name="Wren", role="a flatmate who works nights")])
-
-    def chapter(context):
-        seen.append(context)
-        return llm.ChapterDraft(title="First Month", paragraphs=[llm.ChapterParagraph(text="You sign.", evidence_ids=[])],
-                                recap="You have signed and told your parents. The move is booked for January.")
-
-    monkeypatch.setattr(llm, "enabled", lambda: True)
-    monkeypatch.setattr(llm, "write_bible", bible)
-    monkeypatch.setattr(llm, "write_chapter", chapter)
-    chapters._write(branch, years, 0, 4, "typical")
-    chapters._write(branch, years, 4, 15, "typical")
-    first, second = seen
-    assert "STEP ZERO" in first and "This is the first chapter: open on step zero" in first and first.index("STEP ZERO") < first.index("you sign the offer")
-    assert len(bibles) == 1, "the bible is written once and stored"
-    for context in (first, second):
-        assert "Dario — the teammate who sits opposite" in context and "former warehouse" in context
-        assert "first co-op term, at a payments startup in Toronto" in context, "real facts come from main"
-    assert "THE STORY SO FAR: You have signed and told your parents. The move is booked for January." in second
-    assert db.get_chapter(branch.id, branch.revision, "typical", years[0].at).recap.startswith("You have signed")
-    assert "Dario" not in bibles[0], "the invented people are not fed back as facts"
-
-
-# --- four measures, as change from now ---
-
-from app.sim.outcomes import marks, measures
-
-
 def _sure(key, step, effects, **extra):
     return ev(key, (step, step), basis="sourced", base_probability=0.995, band=0.0, effects=effects, **extra)
 
@@ -243,22 +202,40 @@ def _small(client):
     return going, going["branch"]["id"]
 
 
-def test_assuming_a_possibility_happens_is_a_commit_without_the_llm(client):
+def test_pinning_a_possibility_brings_in_what_it_rests_on(client):
     going, bid = _small(client)
     shape = lambda v: [(y["at"], [(e["date"], e["text"]) for e in y["events"]]) for y in v["years"]]
     before = {e["key"]: e["probability"] for e in going["branch"]["model"]["events"]}
-    made = client.post(f"/branches/{bid}/commits", json={"event_key": "problem_set_full_marks", "at": going["years"][0]["at"]}).json()
+    made = client.post(f"/branches/{bid}/commits", json={"event_keys": ["problem_set_full_marks"], "at": going["years"][0]["at"]}).json()
     commit = made["branch"]["commits"][0]
-    assert commit["message"] == "the set comes back with full marks happens" and commit["patch"]["event_key"] == "problem_set_full_marks"
-    assert commit["at"] == going["years"][5]["at"], "not before its own moment can come: the start of its window"
+    # full marks cannot happen unless the set went in: it is pinned too, and said so in the message
+    assert commit["patch"]["event_keys"] == ["problem_set_on_time", "problem_set_full_marks"]
+    assert commit["message"] == "the problem set goes in before nine and the set comes back with full marks happen"
+    assert [p["step"] for p in commit["patch"]["pins"]] == [1, 5], "each lands no earlier than its own window opens"
+    assert commit["at"] == going["years"][1]["at"], "the commit sits where it starts to bite"
     after = {e["key"]: e["probability"] for e in made["branch"]["model"]["events"]}
     assert after["problem_set_full_marks"] == 1.0 > before["problem_set_full_marks"]
+    assert after["problem_set_on_time"] == 1.0
     assert made["branch"]["measures"]["end"]["joy"]["delta"] != going["branch"]["measures"]["end"]["joy"]["delta"], "measures follow"
-    assert "commit" in [e["event_type"] for e in made["years"][5]["events"]]
-    assert client.post(f"/branches/{bid}/commits", json={"event_key": "nonsense", "at": going["years"][0]["at"]}).status_code == 404
+    assert "commit" in [e["event_type"] for e in made["years"][1]["events"]], "one commit, one mark, where it starts to bite"
+    assert client.post(f"/branches/{bid}/commits", json={"event_keys": ["nonsense"], "at": going["years"][0]["at"]}).status_code == 404
     assert client.post(f"/branches/{bid}/commits", json={"event_key": "choice", "at": going["years"][0]["at"]}).status_code == 404
     undone = client.post(f"/branches/{bid}/undo", json={}).json()
     assert shape(undone) == shape(going) and undone["branch"]["measures"] == going["branch"]["measures"], "undo is exact"
+
+
+def test_several_possibilities_pinned_at_once_are_one_commit(client):
+    going, bid = _small(client)
+    shape = lambda v: [(y["at"], [(e["date"], e["text"]) for e in y["events"]]) for y in v["years"]]
+    keys = ["reconnect_with_old_friend", "kitchen_conversation"]
+    made = client.post(f"/branches/{bid}/commits", json={"event_keys": keys, "at": going["years"][0]["at"]}).json()
+    assert len(made["branch"]["commits"]) == 1, "one configuration, one commit"
+    assert made["branch"]["commits"][0]["patch"]["event_keys"] == ["arrive_at_the_party"] + keys, "and what they rest on"
+    after = {e["key"]: e["probability"] for e in made["branch"]["model"]["events"]}
+    assert all(after[k] == 1.0 for k in keys)
+    undone = client.post(f"/branches/{bid}/undo", json={}).json()
+    assert undone["branch"]["commits"] == [], "undo lets go of the whole configuration at once"
+    assert shape(undone) == shape(going)
 
 
 def test_a_decision_can_split_off_a_path_at_a_date_and_pins_what_came_before(client):

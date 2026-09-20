@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import { belongsOnLine, dayLabel, deadlineOf, isByYear, preciseDate, stepDate, yearOf } from '../format'
+import { belongsOnLine, dayLabel, deadlineOf, preciseDate, yearOf } from '../format'
 import { theme } from '../theme'
 import type { BranchView, Insets, LifeEvent, Scenario, Zone } from '../types'
 import { placeLabels, type Candidate } from './labels'
@@ -86,7 +86,9 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, onSwit
     return added
   }, [layout])
 
-  const origin = compact ? { x: size.w * 0.42, y: size.h * 0.8 } : { x: free.left + freeW * 0.3, y: free.top + freeH * 0.58 }
+  // the trunk sits left of centre, but not hard against the rail: the tree fans both ways now, and a
+  // path on the left still needs room for its name
+  const origin = compact ? { x: size.w * 0.42, y: size.h * 0.8 } : { x: free.left + freeW * 0.36, y: free.top + freeH * 0.58 }
   const mainEvents = events.filter((e) => e.branch_id === 'main' && e.event_type !== 'goal' && belongsOnLine(e))
   const goals = events.filter((e) => e.event_type === 'goal')
   const active = layout.lanes.find((l) => l.view.branch.id === activeId) ?? null
@@ -103,25 +105,30 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, onSwit
         const estimate = n.basis === 'estimated' ? ' · an estimate' : ''
         c.push({
           id: n.id, kind: here ? 'card' : n.kind === 'commit' ? 'commit' : 'node', priority: here ? 0 : 1, anchor: n.at, prefer: active.side, colour, reach: 120, upOnly: true,
-          top: n.head ? `The choice · ${n.caption}` : n.kind === 'commit' ? `Your commit · ${n.caption}` : `${n.caption}${estimate}${here && n.event && active.view.years[n.step]?.outlook[n.event.event_type]?.probability !== undefined ? ` · ${Math.round(active.view.years[n.step].outlook[n.event.event_type].probability! * 100)}%` : ''}`,
+          top: n.head ? 'The choice' : n.kind === 'commit' ? `Your commit · ${n.caption}` : [estimate.replace(/^ · /, ''), here && n.event && active.view.years[n.step]?.outlook[n.event.event_type]?.probability !== undefined ? `${Math.round(active.view.years[n.step].outlook[n.event.event_type].probability! * 100)}%` : ''].filter(Boolean).join(' · '),
           text: n.label,
           onClick: () => onSeek(active.view.branch.id, n.step),
         })
       }
     }
+    // every path drawn carries its name, not only the decision being considered: a tree you can read
+    // without pointing at it. The placer drops what will not fit, most important first.
     for (const lane of layout.lanes) {
       const { branch } = lane.view
-      if (lane === active || !lane.focus) continue
+      if (lane === active) continue
       const closed = branch.status === 'faded' || branch.status === 'stale'
       const deadline = deadlineOf(branch.precondition)
       const base = branch.forming ? 'being drawn' : branch.status === 'stale' && deadline ? `stale · closed ${dayLabel(deadline)}` : branch.status === 'open' && deadline ? `until ${dayLabel(deadline)}` : STATUS_WORDS[branch.status]
       const note = branch.example ? ['an example', base].filter(Boolean).join(' · ') : base
       if (branch.example && leavingExamples) continue
       c.push({
-        id: `name:${branch.id}`, kind: 'name', priority: 2, anchor: lane.labelAt, prefer: lane.side, reach: 96, top: note, text: branch.label,
+        id: `name:${branch.id}`, kind: 'name', priority: lane.focus ? 2 : 2.6, anchor: lane.labelAt, prefer: lane.side, reach: 96, top: note, text: branch.label,
         colour: closed ? theme.color.textDim : branch.status === 'merged' ? theme.color.text : accentOf(lane.view, scenarios),
         onClick: () => onSwitch(branch.id),
       })
+    }
+    for (const f of layout.forks) {
+      if (f.collapsed) c.push({ id: `fork:${f.id}`, kind: 'name', priority: 2.8, anchor: { x: f.x, y: f.y }, prefer: -1, reach: 72, top: '', text: f.label, onClick: () => onFocusDecision?.(f.id) })
     }
     goals.forEach((g, i) => {
       const target = typeof g.payload.target_date === 'string' ? g.payload.target_date : null
@@ -245,7 +252,6 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, onSwit
             <g key={f.id} className="line__fork--collapsed">
               {f.collapsed && <circle cx={f.x} cy={f.y} r={f.scale === 'big' ? 8 : 5} className={f.scale === 'big' ? 'line__fork line__fork--big' : 'line__fork line__fork--big line__fork--minor'} />}
               <circle cx={f.x} cy={f.y} r={14} className="line__fork-hit" tabIndex={0} onClick={unlessDragged(() => onFocusDecision?.(f.id))} onKeyDown={(e) => e.key === 'Enter' && onFocusDecision?.(f.id)}><title>{f.label}</title></circle>
-              {!compact && <text className="line__fork-name" x={f.x - 16} y={f.y + 4} textAnchor="end">{f.label}</text>}
             </g>
           ))}
 
@@ -373,7 +379,7 @@ function Here({ lane, step, accent }: { lane: Lane; step: number; accent: string
   return (
     <g className="line__here" style={{ transform: `translate(${p.x}px, ${p.y}px)` }}>
       <path d="M-3 0 L-24 -7 L-24 7 Z" fill={accent} />
-      <text x={-29} y={4} textAnchor="end">{lane.view.years[step] ? stepDate(lane.view.years[step].at, isByYear(lane.view.years)) : ''}</text>
+
     </g>
   )
 }

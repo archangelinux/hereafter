@@ -205,7 +205,24 @@ export const figureRing = () => cached('figure:ring', () => new THREE.TorusGeome
 /** a decision's circle: a simple, perfect, low cylinder with a crisp rim. Unit radius, top at y = 0, unit depth. */
 export const plazaGeometry = (family: StoneFamily) =>
   cached(`plaza:${family}`, () => {
-    const g = new THREE.CylinderGeometry(1, 1, 1, 96, 1, false).translate(0, -0.5, 0)
+    // a soft-edged disc: the rim is rounded over rather than cut, so a band meeting it has no seam
+    const r = 1
+    const bevel = 0.16 // of the radius, rolled over at the top and again at the foot
+    const profile: THREE.Vector2[] = []
+    const arc = (cx: number, cy: number, from: number, to: number, steps = 7) => {
+      for (let i = 0; i <= steps; i++) {
+        const a = from + ((to - from) * i) / steps
+        profile.push(new THREE.Vector2(cx + Math.cos(a) * bevel, cy + Math.sin(a) * bevel))
+      }
+    }
+    profile.push(new THREE.Vector2(0, 0))
+    profile.push(new THREE.Vector2(r - bevel, 0))
+    arc(r - bevel, -bevel, Math.PI / 2, 0) // the top edge rolls over
+    profile.push(new THREE.Vector2(r, -1 + bevel))
+    arc(r - bevel, -1 + bevel, 0, -Math.PI / 2) // and the foot tucks under
+    profile.push(new THREE.Vector2(0, -1))
+    const g = new THREE.LatheGeometry(profile.reverse(), 96) // bottom-up: a lathe wants its profile that way round, or every face is lit as an underside
+    g.computeVertexNormals()
     return paintSoft(g, stone[family])
   })
 

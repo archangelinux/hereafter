@@ -165,3 +165,59 @@ Content first. The interface is an illustrated **line graph you can read**, not 
   While branches form, a live research feed shows what Browserbase is reading.
 - **Compare**, **commit a change here / undo**, **merge** (typed confirmation, ceremonial),
   **pick**, **log**, **inventory / erase**.
+
+---
+
+## v3 — the real you, and the ghost
+
+Two figures, and the whole interface follows from which one you are looking at.
+
+| | **The real you** | **The ghost** |
+|---|---|---|
+| Where | On main, at **now**, always. A plain marker: it separates past, present and future and says nothing else. | Out in the futures. One ghost, one place at a time. |
+| Moves when | Only when a **merge** makes a choice real — main advances one step and the real you steps onto it. | Whenever you explore: pick a path, walk it, commit, revert, branch. |
+| Shown as | Solid, at the last built stone of main. | Paler, with a thin line home to now, so the tie to reality is always visible. |
+| Panel | **Left rail: reality.** Main's decisions, what has been decided, what is still open. A decision started here forks from now. | **Right rail: the futures you are in.** The path the ghost is on, what could happen, commit / revert / branch, and merge. A decision started here forks at the ghost's position. |
+
+**Every branch, and every commit inside it, is an alternative universe.** The ghost is how they
+are visited. It can:
+
+- **walk** a path, step by step;
+- **commit** a step at where it stands (one more thing that happens on this path);
+- **revert** — step back to any earlier point on the path and re-simulate everything after it;
+- **branch** at where it stands, splitting that future into further futures;
+- **delete** a branch it no longer wants;
+- **switch** to another path, leaving the one it was in.
+
+None of it touches main. **Merge** is the one moment the two meet: the ghost's first step becomes
+real, the real you steps onto it, and the ghost comes home to the new now.
+
+Two ways to start a decision, and they mean different things:
+
+- from the **left rail** (reality): a decision you face *now*, forking from main;
+- from the **right rail** while the ghost is out (branch / commit): a decision inside the future
+  you are exploring, forking at the ghost's position.
+
+---
+
+## v3.1 — context is not a log, and what the shapes mean
+
+**What the person offers is context, not history.** A site, an upload, an assistant export: none
+of it becomes a dated mark on main. It builds the person's **current state** — who they are now,
+their personality estimate, the metrics that matter — which feeds the state vector, what the model
+is told when it proposes and judges what could happen, and what research looks up. It is listed
+under "your data", where it can be forgotten one offering at a time. Undated, ambiguous dots
+disappear from the line by construction.
+
+**The log** is what the person *did*: decisions they merged, and things they told Hereafter with a
+date.
+
+**The shapes mean exactly two things, everywhere, in both views:**
+
+| Shape | Meaning |
+|---|---|
+| **Platform circle** (large = life decision, small = day-to-day) | A **node**: a decision, with its paths leaving it. |
+| **Dot** on a path | A **commit**: one step the ghost added to that path. |
+
+Nothing else is a circle or a dot. Simulated events are the steps of the path itself, read as you
+walk; they are not marks scattered along it.

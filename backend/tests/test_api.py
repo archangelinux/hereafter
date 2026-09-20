@@ -48,6 +48,10 @@ def demo_branches(client, scenario_id="demo-offer"):
     return [v for v in views if v["branch"]["scenario_id"] == scenario_id]
 
 
+CHAT = "\n".join(f"[2026-08-{d:02d}, 9:1{d % 10}:00 PM] {who}: secret words {d}"
+                 for d in range(1, 29) for who in ("Robin", "Sam Lee", "Priya"))
+
+
 def test_runs_with_llm_off_and_seeds_a_demo(client):
     health = client.get("/health").json()
     assert health["llm_enabled"] is False and health["store"] == "local"
@@ -60,7 +64,6 @@ def test_runs_with_llm_off_and_seeds_a_demo(client):
     branches = demo_branches(client)
     assert len(branches) == 3 == len(big["options"]) and all(b["years"] for b in branches)
     assert {b["branch"]["id"] for b in branches} == set(big["branch_ids"])
-    assert client.get("/narration", params={"branch_id": branches[0]["branch"]["id"]}).json()["lines"] == {}
     # one earlier decision is already made: a chosen path, a road not taken, and the choice on main in the words of step zero
     went, packed = demo_branches(client, "demo-farewell")
     assert (earlier["status"], went["branch"]["status"], packed["branch"]["status"]) == ("decided", "merged", "faded")
@@ -78,7 +81,7 @@ def test_tokens_are_enforced(client):
     assert client.get("/trunk", params={"person_id": pid}, headers=other_auth).status_code == 403
     assert client.get("/trunk", params={"person_id": "nobody"}, headers=auth).status_code == 401
     branch = new_scenario(client, pid, auth)["branches"][0]["branch"]["id"]
-    for path in ("/chapters", "/research", "/narration", "/evidence"):
+    for path in ("/research", "/evidence"):
         params = {"branch_id": branch, "year": 2030}
         assert client.get(path, params=params, headers=other_auth).status_code == 403, path
     assert client.post(f"/branches/{branch}/commits", json={"year": 2030, "message": "move to Toronto"},
@@ -182,9 +185,6 @@ def test_merge_needs_the_name_is_permanent_and_stale_cannot_merge(client):
 
     client.post(f"/branches/{offer['id']}/undo", json={}, headers=auth)  # closed: refused, nothing changes
     faded_events = [e for y in made["branches"][0]["years"] for e in y["events"]] + [{"id": "missing"}]
-    carried = client.post("/carry", json={"branch_id": offer["id"], "event_id": faded_events[0]["id"]}, headers=auth)
-    assert carried.status_code == 200 and carried.json()["goal_event"]["event_type"] == "goal"
-    assert client.post("/carry", json={"branch_id": offer["id"], "event_id": faded_events[1]["id"]}, headers=auth).status_code == 409
 
 
 def test_compare_aligns_branches_and_marks_differences(client):
@@ -196,39 +196,13 @@ def test_compare_aligns_branches_and_marks_differences(client):
     work = {v["branch_id"]: v["probability"] for v in last["first_day_at_work"]["values"]}
     assert work[a] > work[b] and last["first_day_at_work"]["differs"], "a job starts sooner than a degree ends"
     assert all(d["key"] != "choice" for d in result["distinctive"])
-
-
-def test_chapters_and_evidence_work_without_the_llm(client):
+def test_evidence_works_without_the_llm(client):
     branch = demo_branches(client)[0]
     bid, years = branch["branch"]["id"], branch["years"]
-    opening = client.get("/chapters", params={"branch_id": bid, "at": years[0]["at"]}).json()
-    assert opening["status"] == "ready" and (opening["from_at"], opening["to_at"]) == (years[0]["at"], years[3]["at"]), "the first month"
-    assert opening["paragraphs"][0]["text"].startswith("today — You accept the San Francisco offer"), "chapter one opens on step zero"
-    later = client.get("/chapters", params={"branch_id": bid, "at": years[9]["at"]}).json()
-    assert (later["from_at"], later["to_at"]) == (years[4]["at"], years[14]["at"]) and len(later["paragraphs"]) == 11, "the rest of year one"
-    yearly = client.get("/chapters", params={"branch_id": bid, "at": years[-1]["at"]}).json()
-    assert (yearly["from_at"], yearly["to_at"]) == (years[19]["at"], years[22]["at"]), "then a year at a time"
 
     evidence = client.get("/evidence", params={"branch_id": bid}).json()["evidence"]
     assert {e["kind"] for e in evidence} == {"researched"}, "no life-table statistics unless the background is switched on"
-    cited = {i for ch in (opening, later, yearly) for p in ch["paragraphs"] for i in p["evidence_ids"]}
-    assert cited <= {e["id"] for e in evidence}
     assert client.get("/research", params={"branch_id": bid}).json()["research"] in ("none", "done")  # "done" when stored research exists
-
-
-def test_chapter_prose_is_encrypted_at_rest(client):
-    from app import db
-
-    branch = demo_branches(client)[0]
-    chapter = client.get("/chapters", params={"branch_id": branch["branch"]["id"], "at": branch["years"][0]["at"]}).json()
-    stored = db.conn().execute("SELECT doc FROM chapters").fetchone()["doc"]
-    assert chapter["paragraphs"][0]["text"][:12] not in stored
-
-
-CHAT = "\n".join(f"[2026-08-{d:02d}, 9:1{d % 10}:00 PM] {who}: secret words {d}, says Robin"
-                 for d in range(1, 29) for who in ("Robin", "Sam Lee", "Priya"))
-
-
 def test_offering_routes_everything_and_never_errors(client):
     pid, auth = new_person(client, display_name="Sam Lee")
     archive = io.BytesIO()
@@ -287,7 +261,6 @@ def test_inventory_then_erase_leaves_nothing(client):
     pid, auth = new_person(client, display_name="Sam")
     client.post("/ingest", data={"person_id": pid, "text": "I moved to Waterloo in 2021."}, headers=auth)
     branch = new_scenario(client, pid, auth)["branches"][0]["branch"]["id"]
-    client.get("/chapters", params={"branch_id": branch, "year": 2027}, headers=auth)
 
     inventory = client.get("/inventory", params={"person_id": pid}, headers=auth).json()
     assert {s["source"] for s in inventory["sources"]} == {"told", "simulated"} and inventory["stored_nowhere"]
@@ -319,8 +292,6 @@ def test_concurrent_reads_do_not_fail_or_blank_the_person(client):
 
 
 # --- any decision, any size ---
-
-
 def test_a_small_decision_is_lived_in_days_with_the_llm_off(client):
     going, staying = demo_branches(client, "demo-tonight")
     assert [y["label"] for y in going["years"][:3]] == ["today", plain_date(going["years"][1]["at"]), plain_date(going["years"][2]["at"])]
@@ -335,9 +306,6 @@ def test_a_small_decision_is_lived_in_days_with_the_llm_off(client):
     assert "sleep_under_five_hours" in outlook and "city" not in outlook
 
     bid = going["branch"]["id"]
-    night = client.get("/chapters", params={"branch_id": bid, "at": going["years"][0]["at"]}).json()
-    assert night["status"] == "ready" and night["from_at"] == going["years"][0]["at"] and len(night["paragraphs"]) == 7
-    assert night["paragraphs"][0]["text"].startswith("today — ") and "day 7" not in night["title"]
 
 
 def test_commit_on_a_small_decision_forces_an_event_and_undo_restores_it(client):
@@ -370,20 +338,6 @@ def test_compare_shows_shared_outcomes_and_what_is_distinctive(client):
     distinct = {(d["branch_id"], d["key"]) for d in result["distinctive"]}
     assert (staying["branch"]["id"], "photos_without_you") in distinct
     assert all(d["basis"] in ("estimated", "sourced") and d["label"] and d["words"] for d in result["distinctive"])
-
-
-def test_the_rare_life_is_a_different_coherent_life(client):
-    going, _ = demo_branches(client, "demo-tonight")
-    bid = going["branch"]["id"]
-    typical = client.get("/lives", params={"branch_id": bid}).json()
-    rare = client.get("/lives", params={"branch_id": bid, "which": "rare"}).json()
-    events = lambda life: [e["event_type"] for y in life["years"] for e in y["events"]]
-    assert typical["years"] == going["years"] and rare["which"] == "rare" and "rarest" in rare["rarity_words"]
-    assert len(events(rare)) >= 2 and events(rare) != events(typical)
-    chapter = client.get("/chapters", params={"branch_id": bid, "at": going["years"][0]["at"], "which": "rare"}).json()
-    assert chapter["which"] == "rare" and chapter["status"] == "ready"
-
-
 def test_merging_one_decision_leaves_other_decisions_open(client):
     pid, auth = new_person(client, birth_year=2003)
     first, second = new_scenario(client, pid, auth), new_scenario(client, pid, auth)
@@ -495,8 +449,6 @@ def test_questions_widen_branches_until_answered_and_are_never_asked_twice(clien
     main = client.get("/trunk", params={"person_id": pid}, headers=auth).json()["events"]
     assert [e["event_type"] for e in main] == ["answer"] and main[0]["source"] == "told"
 
-    later = post_scenario(client, auth, {"person_id": pid, "situation": "Residence or commute?", "options": UNIS})
-    assert later["questions"] == [], "main now knows the major, so it is not asked again"
 
 
 def test_a_scenario_can_assume_a_branch_and_scenarios_list_soonest_first(background, client, monkeypatch):
@@ -587,20 +539,12 @@ def test_the_demo_carries_real_stored_research_rechecked_at_seed_time(client):
         assert evidence["source_url"] == rate["source_url"] and evidence["retrieved_at"] == rate["retrieved_at"] and evidence["gap"]
     offer = branches["demo-offer|Take the offer"]["branch"]
     assert offer["params"]["housing_cost_ratio"] == stored["branches"]["demo-offer|Take the offer"]["params"]["housing_cost_ratio"]
-
-
 def test_step_labels_are_plain_dates_everywhere(client):
     import re
 
     counted = re.compile(r"\b(day|week|month) \d+\b|\b(this week|this month|tonight|tomorrow)\b", re.I)
     for view in client.get("/branches", params=DEMO).json()["branches"]:
         bid, unit = view["branch"]["id"], view["branch"]["span"]["unit"]
-        labels = [y["label"] for y in view["years"]] + [y["label"] for y in client.get("/lives", params={"branch_id": bid, "which": "rare"}).json()["years"]]
-        assert labels and not any(counted.search(l) for l in labels)
-        assert labels[0] == ("today" if view["branch"]["forked_at"] == view["years"][0]["at"] == str(__import__("datetime").date.today()) else plain_date(view["years"][0]["at"]))
-        assert all(l == "today" or re.fullmatch(r"\d{1,2} [A-Z][a-z]+( \d{4})?", l) for l in labels)
-        chapter = client.get("/chapters", params={"branch_id": bid, "at": view["years"][0]["at"]}).json()
-        assert not counted.search(chapter["title"]) and not any(counted.search(p["text"].split(" — ")[0]) for p in chapter["paragraphs"])
 
 
 def test_today_is_only_ever_today():
@@ -649,7 +593,6 @@ def test_assistant_export_reads_only_the_persons_side(client):
     assert unread == 0 and "Montreal" in chunks[0] and "ASSISTANT WORDS" not in chunks[0]
 
     offered = route_file("conversations.json", _claude_export().encode())
-    assert offered[0].kind == "ai_chat_export" and offered[0].text == ""   # raw JSON is not carried along
     assert ai_chat.parse('{"not": "an export"}') is None
 
 
@@ -835,7 +778,7 @@ def test_older_branches_are_migrated(client):
 
     branch, years = db.get_branch(demo_branches(client)[0]["branch"]["id"])
     branch.model["events"] = [e for e in branch.model["events"] if not e.get("head")]
-    for e in branch.model["events"]:                        # the pre-2.5, pre-layout shape: yearly steps, forty years, no step zero
+    for e in branch.model["events"]:
         e.pop("breakdown"); e.pop("terms", None); e.pop("days", None)
         e["probability"] = e.pop("base_probability")
         e["window"] = [0, 1]

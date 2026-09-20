@@ -31,8 +31,17 @@ ES_API_KEY = os.getenv("ELASTICSEARCH_API_KEY", "")
 ES_INDEX = os.getenv("HEREAFTER_ES_INDEX", "hereafter-life-events")
 ES_EVIDENCE_INDEX = os.getenv("HEREAFTER_ES_EVIDENCE_INDEX", "hereafter-evidence")
 ES_RUNS_INDEX = os.getenv("HEREAFTER_ES_RUNS_INDEX", "hereafter-runs")
-# Preconfigured dense-vector inference endpoint on Elastic Cloud; backs the semantic_text field.
-ES_INFERENCE_ID = os.getenv("HEREAFTER_ES_INFERENCE_ID", ".multilingual-e5-small-elasticsearch")
+# Preconfigured inference endpoints on Elastic Cloud (the Elastic Inference Service: hosted, no
+# extra key, always warm). Embeddings back the semantic_text fields; the reranker is a Jina
+# cross-encoder run over the fused result window. Set the rerank id empty to drop that stage.
+ES_INFERENCE_ID = os.getenv("HEREAFTER_ES_INFERENCE_ID", ".jina-embeddings-v5-text-small")
+ES_RERANK_ID = os.getenv("HEREAFTER_ES_RERANK_ID", ".jina-reranker-v3.5")
+# Who chooses the store queries behind "who you are now" (backend/app/state.py):
+#   elastic = the Agent Builder agent on the cluster; llm = the planner in llm.py;
+#   rules = no model at all. Measured on the demo log: elastic ~42 s and 4 LLM calls,
+#   llm ~9 s. The agent log on GET /trunk names whichever ran.
+STATE_PLANNER = os.getenv("HEREAFTER_STATE_PLANNER", "llm").lower()
+STATE_PLANNER_TIMEOUT = int(os.getenv("HEREAFTER_STATE_PLANNER_TIMEOUT", "120"))
 
 BROWSERBASE_API_KEY = os.getenv("BROWSERBASE_API_KEY", "")
 BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
@@ -45,3 +54,7 @@ SIM_HORIZON_YEARS = int(os.getenv("HEREAFTER_SIM_HORIZON", "40"))
 FRONTEND_ORIGINS = os.getenv("HEREAFTER_FRONTEND_ORIGINS", "http://localhost:5642,http://127.0.0.1:5642").split(",")
 RESEARCH_ENABLED = os.getenv("HEREAFTER_RESEARCH", "on").lower() not in ("off", "0", "false", "no")
 RESEARCH_BUDGET_SECONDS = int(os.getenv("HEREAFTER_RESEARCH_BUDGET", "75"))
+# Reranker score above which already-researched evidence answers a new question and is reused
+# instead of crawled again. Measured on the demo evidence base: genuine rephrasings score
+# +0.21 to +0.71, unrelated questions that share vocabulary score -0.10 to -0.16.
+REUSE_THRESHOLD = float(os.getenv("HEREAFTER_REUSE_THRESHOLD", "0.2"))

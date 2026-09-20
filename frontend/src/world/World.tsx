@@ -28,10 +28,10 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import type { BranchView, BranchYear, LifeEvent, Scenario } from '../types'
 import { LabelLayer, LabelProjector, type Insets, type LabelSpec } from './Labels'
 import { Mark } from './Marks'
-import { along, dOfS, DS, layoutRare, layoutWorld, type LaneSpec, type WorldLayout } from './layout'
+import { along, DS, layoutRare, layoutWorld, type LaneSpec, type WorldLayout } from './layout'
 import { Band } from './Band'
 import { createRibbon, ribbonMaterial, writeRibbon } from './ribbon'
-import { Main, Plazas, Seeds, Sky } from './Scenery'
+import { Ends, Main, Plazas, Seeds, Sky, Stops } from './Scenery'
 import { newWalkerState, Walker, type WalkerState } from './Walker'
 import './world.css'
 
@@ -117,9 +117,19 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
   useEffect(() => {
     prevStep.current = { lane: activeId, step: stepNow }
   }, [activeId, stepNow])
-  const target = active && hereStep !== null
-    ? { lane: active, d: Math.min(active.status === 'open' ? active.fullLen : Math.max(active.drawLen, active.fullLen), dOfS(active, hereStep + 0.6)), steps: jumped }
-    : active ? { lane: active, d: dOfS(active, 0.6), steps: 1 } : null
+  // Where the figure stands for the step being read. Anything within reach of the platform IS the
+  // platform — so the last step always finishes on the stone, whatever the step bookkeeping says —
+  // and nothing ever walks past it.
+  // The figure stands on one of the path's own circles — the same places the reading stops at — and
+  // the last of them is the end platform. The rarest life is read on the same circles.
+  const restAt = (lane: typeof active, step: number) => {
+    if (!lane || lane.rests.length === 0) return 0
+    const last = rare ? Math.min(lane.rests.length, rare.length) : lane.rests.length
+    return (lane.rests.find((r) => r.step >= step) ?? lane.rests[last - 1] ?? lane.rests[lane.rests.length - 1]).d
+  }
+  const target = active
+    ? { lane: active, d: restAt(active, hereStep ?? 0), steps: hereStep === null ? 1 : jumped }
+    : null
   // a branch that runs down the screen (a side-stream) wants the figure high in the frame, not low
   const downhill = useMemo(() => {
     if (!active) return false
@@ -142,17 +152,17 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
   // names and captions live in one layer over the canvas, where they can be kept apart from each other and from the HUD
   const labels = useMemo<LabelSpec[]>(() => {
     const out: LabelSpec[] = [
-      ...(active && arrivedId ? [] : [{ id: 'here', priority: 100, align: 'above' as const, className: 'hw-here', node: hereLabel ?? 'now', at: () => ({ x: walker.current.x, y: walker.current.y + 1.2, z: walker.current.z }) }]),
+      ...(active && (arrivedId || !hereLabel) ? [] : [{ id: 'here', priority: 100, align: 'above' as const, className: 'hw-here', node: hereLabel ?? 'now', at: () => ({ x: walker.current.x, y: walker.current.y + 1.2, z: walker.current.z }) }]),
     ]
+    // Every path carries its name, always — the island should read without pointing at anything. When
+    // two names would overlap the projector hides the lesser one, so priority is the whole ordering:
+    // what you are pointing at, then the path you are on, then what is still open, then the ruins.
     for (const lane of layout.lanes) {
-      const settled = lane.status !== 'open' && lane.status !== 'faded'
       const hovered = hoveredId === lane.id
-      // far names belong to the overview; what is settled keeps its name to itself until you go near it
-      if (!hovered && (activeId || settled)) continue
-      const p = along(lane.samples, lane.tagD)
+      const p = along(lane.samples, lane.endD) // the name stands on the platform at the path's end
       out.push({
         id: `lane:${lane.id}`,
-        priority: hovered ? 95 : lane.status === 'open' ? (lane.big ? 70 : 40) : 20,
+        priority: hovered ? 95 : lane.id === activeId ? 90 : lane.status === 'open' ? (lane.big ? 70 : 40) : lane.status === 'merged' ? 55 : 20,
         always: lane.atNow && lane.status === 'open' && !activeId,
         align: lane.side === -1 && lane.status !== 'merged' ? 'left' : 'right',
         className: `hw-tag hw-tag--${lane.status} ${lane.big ? '' : 'hw-tag--small'}`,
@@ -169,10 +179,10 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
         ),
       })
     }
+    // and so does every decision, the ones that are only a circle included
     for (const plaza of layout.plazas) {
       const hovered = hoveredPlaza === plaza.id
-      if (!hovered && (activeId || plaza.collapsed || !plaza.big || !plaza.onMain)) continue
-      out.push({ id: `plaza:${plaza.id}`, priority: hovered ? 96 : 60, align: 'left', className: 'hw-tag hw-tag--plaza', at: () => ({ x: plaza.at.x - Math.cos(plaza.at.heading) * (plaza.r + 0.3), y: plaza.at.y, z: plaza.at.z - Math.sin(plaza.at.heading) * (plaza.r + 0.3) }), node: <span className="hw-tag__note">{plaza.label}</span> })
+      out.push({ id: `plaza:${plaza.id}`, priority: hovered ? 96 : plaza.collapsed ? 25 : plaza.big ? 60 : 35, align: 'left', className: `hw-tag hw-tag--plaza ${plaza.collapsed ? 'hw-tag--quiet' : ''}`, at: () => ({ x: plaza.at.x - Math.cos(plaza.at.heading) * (plaza.r + 0.3), y: plaza.at.y, z: plaza.at.z - Math.sin(plaza.at.heading) * (plaza.r + 0.3) }), node: <span className="hw-tag__note">{plaza.label}</span> })
     }
     if (rareTagAt) {
       const p = rareTagAt
@@ -213,7 +223,7 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
         <Seeds layout={layout} still={still} />
 
         {layout.main.nodes.map((n) => (
-          <Mark key={n.id} node={n} at={n.at} laneId={null} width={1.15} walked={false} speaking={false} pale={1} still={still} walker={walker} onPick={onOpenLog} />
+          <Mark key={n.id} node={n} at={n.at} laneId={null} width={1.15} walked={false} pale={1} still={still} walker={walker} onPick={onOpenLog} />
         ))}
 
         {[...layout.lanes, ...leaving.filter((l) => !layout.lanes.some((x) => x.id === l.id))].map((lane) => {
@@ -244,7 +254,7 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
                     width={lane.width}
                     sink={lane.status === 'faded' || lane.status === 'stale' || lane.status === 'expired' ? 0.42 * Math.min(1, n.d / 2.6) : 0}
                     walked={isActive}
-                    speaking={isActive && arrivedId === n.id}
+                   
                     pale={pale}
                     still={still}
                     walker={walker}
@@ -258,6 +268,8 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
 
         {/* circles only where a decision is made; drawn over the bands that meet there */}
         <Plazas plazas={layout.plazas} still={still} onHover={setHoveredPlaza} onPick={(p) => (onFocusScenario ? onFocusScenario(p.id) : p.branchIds[0] && onSwitch(p.branchIds[0]))} />
+        <Ends lanes={layout.lanes} still={still} onHover={setHoveredId} onGo={onSeek} />
+        <Stops lanes={layout.lanes} still={still} activeId={activeId} hereStep={hereStep} onGo={onSeek} />
         {active && rare && <RareStrand lane={active} years={rare} still={still} />}
         {/* the real you: always at now, never in a future */}
         <Walker layout={layout} target={null} state={real} still />

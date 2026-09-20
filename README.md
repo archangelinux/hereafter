@@ -39,12 +39,14 @@ cd backend && .venv/bin/python -m pytest -q
 | `backend/app/chapters.py`, `evidence.py` | A branch read as chapters with margin notes, and what those notes point to. |
 | `backend/app/security.py` | Bearer token per person (hashed), Fernet encryption at rest for the person record, page cache and chapter prose; `/inventory` and `/erase`. |
 | `backend/app/sim/engine.py` | The life-course background (weather, not plot): year horizons only, life-script events opt-in, capped share. The Monte Carlo engine. Pure numpy. 1,000 runs per branch, seeded from the fork state and the assumption, so the same question always gets the same futures. The visible path is the medoid run; per-year solidity is cross-run agreement with it. |
-| `backend/app/store.py` | Life events in Elasticsearch: `create`-only writes (the past cannot be edited — there is no update or delete anywhere), hybrid BM25 + dense retrieval through an RRF retriever over a `semantic_text` field, date-histogram + terms aggregations. A SQLite stand-in with the same surface runs when Elastic isn't configured. |
-| `backend/app/state.py` | The retrieval agent. It chooses which store queries to run to fill the present-day state vector (LLM planner, or a rules planner when the LLM is off), logs each choice, then reconciles conflicting sources by recency and confidence and logs each ruling. Both logs come back on `GET /trunk`. |
+| `backend/app/store.py` | Life events in Elasticsearch: `create`-only writes (the past cannot be edited — there is no update or delete anywhere), hybrid BM25 + dense retrieval through an RRF retriever over a `semantic_text` field (Jina v5 embeddings) finished by a Jina cross-encoder rerank, date-histogram + terms aggregations. A SQLite stand-in with the same surface runs when Elastic isn't configured. |
+| `backend/app/state.py`, `agent_builder.py` | The retrieval agent. It chooses which store queries to run to fill the present-day state vector, logs each choice, then reconciles conflicting sources by recency and confidence and logs each ruling. Both logs come back on `GET /trunk`. The planner is Elastic's own Agent Builder agent, the planner in `llm.py`, or a rules planner with no model at all — `HEREAFTER_STATE_PLANNER` picks, and the log names whichever ran. |
 | `backend/app/ingest/` | The Offering. `router` labels each input, every label goes through the same `_extract` call, `links` is the per-link Browserbase pipeline (substantial / thin / breadcrumb), `chat` measures chat exports and discards them. Nothing here returns an error to the user. |
 | `backend/app/llm.py` | The only three things the LLM may do: extract, pick retrieval queries, narrate a log the simulator already decided. Provider follows the key in `.env`: OpenAI (`OPENAI_API_KEY`, default `gpt-5.5`) or Anthropic (`ANTHROPIC_API_KEY`, default `claude-opus-5`); override with `HEREAFTER_LLM_MODEL`. |
 | `frontend/` | One React Three Fiber scene and a thin text overlay. All design tokens live in `src/theme.ts`. |
 | `docs/API.md` | The contract between the two. |
+| `docs/ELASTICSEARCH.md` | Every index, mapping, retriever and aggregation, who issues which query, and the Agent Builder tools. |
+| `docs/BROWSERBASE.md` | Both crawl jobs, the readability tiers, and the research pipeline. |
 
 ## Rules the code enforces
 
