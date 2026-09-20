@@ -1,0 +1,65 @@
+{
+ "about": "34-year-old retail manager considering a move into software.",
+ "items": [
+  {
+   "source": "linkedin",
+   "date": "2026-09",
+   "text": "Store Manager at RetailCo, September 2019 to present. Manages a team of 22, owns the store schedule and inventory budget."
+  },
+  {
+   "source": "linkedin",
+   "date": "2026-09",
+   "text": "Earlier: Assistant Manager at RetailCo 2016 to 2019, Sales Associate 2013 to 2016."
+  },
+  {
+   "source": "linkedin",
+   "date": "2026-09",
+   "text": "Education: Diploma in Business Administration, Seneca College, 2013."
+  },
+  {
+   "source": "linkedin",
+   "date": "2026-08",
+   "text": "Recent post: 'Fourteen years in retail. Starting to learn to code in the evenings.'"
+  },
+  {
+   "source": "github",
+   "date": "2026-06",
+   "text": "Four public repositories, all tutorial projects in HTML, CSS and JavaScript, 9 commits in total, all since May 2026."
+  },
+  {
+   "source": "github",
+   "date": "2026-08",
+   "text": "A repository named 'inventory-tool' with a small JavaScript script that reads a spreadsheet of stock counts."
+  },
+  {
+   "source": "chat",
+   "date": "2026-07",
+   "text": "Asked ChatGPT how much full-time coding bootcamps cost and whether part-time evening programs are worth it."
+  },
+  {
+   "source": "chat",
+   "date": "2026-08",
+   "text": "Asked ChatGPT what junior developer salaries look like compared with retail management pay."
+  },
+  {
+   "source": "chat",
+   "date": "2026-08",
+   "text": "Asked ChatGPT how to learn JavaScript while working full-time with an irregular schedule."
+  },
+  {
+   "source": "chat",
+   "date": "2026-09",
+   "text": "Asked ChatGPT how long a career switch into software usually takes and whether employers hire people without a computer science degree."
+  },
+  {
+   "source": "instagram",
+   "date": "2026-05",
+   "text": "Photos at the park with two young children, caption: 'family Saturday'."
+  },
+  {
+   "source": "instagram",
+   "date": "2026-07",
+   "text": "Post of a finished home-built bookshelf, caption: 'learned this from videos, took three weekends'."
+  }
+ ]
+}

@@ -4,6 +4,13 @@ Version control for your life. The past is an immutable trunk of light; the pres
 on its own; from "now" you walk down statistically simulated futures before choosing one in real
 life. Paths you don't take fade. Paths you wait too long on expire.
 
+## The decision agent (terminal)
+
+Give it a person's context (LinkedIn, GitHub, Instagram, chat history) and a decision, and it asks at
+most three questions, each chosen by arithmetic because its answer would most change what to do, then
+saves everything it learned. Try it: `cd backend && .venv/bin/python -m app.agent --fixture dev -q "Berlin startup or stay at Acme?"`.
+Full guide in [docs/AGENT.md](docs/AGENT.md).
+
 ## Run it
 
 ```bash

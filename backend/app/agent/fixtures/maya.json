@@ -1,0 +1,65 @@
+{
+ "about": "18-year-old finishing high school in Toronto choosing a university.",
+ "items": [
+  {
+   "source": "resume",
+   "date": "2026-06",
+   "text": "Ontario Secondary School Diploma, Grade 12 average 94 percent, Grade 12 calculus 96 percent, Grade 12 physics 91 percent."
+  },
+  {
+   "source": "resume",
+   "date": "2026-06",
+   "text": "Part-time cashier at a grocery store since September 2025, about 12 hours a week, saving for tuition."
+  },
+  {
+   "source": "github",
+   "date": "2025-11",
+   "text": "Public repository 'course-scraper': a Python script that collects university course listings, 14 stars."
+  },
+  {
+   "source": "github",
+   "date": "2026-03",
+   "text": "Public repository 'study-buddy': a React app for making flashcards, 3 contributors, last commit in March 2026."
+  },
+  {
+   "source": "github",
+   "date": "2026-02",
+   "text": "No repositories that use Java, C++ or systems programming."
+  },
+  {
+   "source": "resume",
+   "date": "2026-02",
+   "text": "Second place at a regional high school hackathon in February 2026, building a bus-arrival tracker with a team of three."
+  },
+  {
+   "source": "chat",
+   "date": "2026-04",
+   "text": "Asked ChatGPT how co-op terms are paid and whether first-year students can get placements."
+  },
+  {
+   "source": "chat",
+   "date": "2026-05",
+   "text": "Asked ChatGPT how OSAP student loans work and how much rent costs in Waterloo compared with Hamilton."
+  },
+  {
+   "source": "chat",
+   "date": "2026-05",
+   "text": "Asked ChatGPT whether it is better to live at home for the first year to save money."
+  },
+  {
+   "source": "instagram",
+   "date": "2026-01",
+   "text": "Post about playing cello in the school orchestra, caption: 'last concert before exams, going to miss this group'."
+  },
+  {
+   "source": "instagram",
+   "date": "2026-04",
+   "text": "Post from a food bank volunteering shift with friends, caption: 'Saturday well spent'."
+  },
+  {
+   "source": "linkedin",
+   "date": "2026-06",
+   "text": "Headline: high school student interested in computer science and building things people use."
+  }
+ ]
+}
