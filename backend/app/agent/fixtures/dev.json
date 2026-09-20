@@ -1,0 +1,70 @@
+{
+ "about": "29-year-old backend engineer in Toronto weighing a startup offer.",
+ "items": [
+  {
+   "source": "linkedin",
+   "date": "2026-09",
+   "text": "Senior Backend Engineer at Acme Payments, Toronto, September 2022 to present. Led the migration of the payments ledger from a monolith to services."
+  },
+  {
+   "source": "linkedin",
+   "date": "2020-06",
+   "text": "Software Engineer at Northwind Logistics, Waterloo, June 2019 to August 2022. Built route-optimisation APIs in Go."
+  },
+  {
+   "source": "linkedin",
+   "date": "2019-04",
+   "text": "B.Sc. Computer Science, University of Waterloo, graduated 2019."
+  },
+  {
+   "source": "linkedin",
+   "date": "2026-09",
+   "text": "Location: Toronto, Canada. Skills endorsed: Go, Rust, PostgreSQL, distributed systems, team leadership."
+  },
+  {
+   "source": "github",
+   "date": "2026-07",
+   "text": "Maintains 'ledgerctl', an open-source Rust command-line tool for auditing double-entry ledgers, 340 stars, 11 contributors."
+  },
+  {
+   "source": "github",
+   "date": "2026-08",
+   "text": "About 60 percent of public commits in the last year are in Rust, the rest in Go."
+  },
+  {
+   "source": "github",
+   "date": "2025-12",
+   "text": "Gave a talk titled 'Rewriting our ledger without downtime' at a local meetup, slides posted publicly."
+  },
+  {
+   "source": "chat",
+   "date": "2026-08",
+   "text": "Asked ChatGPT how startup equity, vesting cliffs and strike prices work, and what a fair salary-for-equity trade looks like."
+  },
+  {
+   "source": "chat",
+   "date": "2026-09",
+   "text": "Asked ChatGPT to compare relocating to Berlin with staying in Toronto for a seed-stage startup offer."
+  },
+  {
+   "source": "chat",
+   "date": "2026-07",
+   "text": "Asked ChatGPT how much runway a founder should have saved before quitting a job."
+  },
+  {
+   "source": "instagram",
+   "date": "2026-06",
+   "text": "Photos from a week of hiking in Banff, caption: 'weekends are for the mountains'."
+  },
+  {
+   "source": "instagram",
+   "date": "2026-08",
+   "text": "Post with a friend who runs a small startup, caption: 'proud of this one, no idea how they do it'."
+  },
+  {
+   "source": "linkedin",
+   "date": "2026-09",
+   "text": "Recent post: 'Ten years in, I keep wondering what building something from zero would feel like.'"
+  }
+ ]
+}

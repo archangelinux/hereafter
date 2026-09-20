@@ -12,4 +12,5 @@ pypdf==6.19.0
 pytest==9.1.1
 python-dotenv==1.2.3
 python-multipart==0.0.32
+rich==15.0.0
 uvicorn==0.53.0

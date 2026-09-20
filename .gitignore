@@ -1,6 +1,7 @@
 .env
 backend/.venv/
-backend/hereafter.db
+backend/hereafter.db*
+backend/sessions/
 backend/cache/
 __pycache__/
 .pytest_cache/
