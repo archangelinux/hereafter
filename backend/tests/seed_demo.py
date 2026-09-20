@@ -1,8 +1,10 @@
-"""The demo person: one coherent, simple story, so the page is never empty and the demo survives
-bad wifi. A main that leads plausibly to the present; one big decision with three paths; one
-small decision with two; and one earlier small decision already merged, so a chosen path and a
-road not taken exist. Everything is a stored fixture except the research in seed_data/, which was
-really run once (seed_research.py) and is re-verified every time the demo is seeded."""
+"""TEST DATA ONLY: a seeded person the test suite reads. The app itself seeds nothing and never imports this.
+
+One coherent, simple story so the tests have something to read: a main that leads plausibly to the
+present; one big decision with three paths; one small decision with two; and one earlier small
+decision already merged, so a chosen path and a road not taken exist. Everything is a stored fixture
+except the research in fixtures/demo_research.json, which was really run once and is re-verified
+every time this is seeded."""
 
 from __future__ import annotations
 
@@ -13,13 +15,14 @@ from datetime import date, datetime, timedelta
 from hashlib import sha1
 from pathlib import Path
 
-from . import branches, db, llm, outcome_model
-from .models import Evidence, Horizon, LifeEvent, Option, Person, Scenario
-from .personality import from_mbti
-from .sim.outcomes import step_offsets, window_from_days
-from .state import build_state
+from app import branches, db, llm, outcome_model, security
+from app.models import Evidence, Horizon, LifeEvent, Option, Person, Scenario
+from app.personality import from_mbti
+from app.sim.outcomes import step_offsets, window_from_days
+from app.state import build_state
 
 DEMO_ID = "demo"
+DEMO_TOKEN = "demo"  # the tests' bearer token: stored hashed like any other person's
 DEMO_MBTI = "ENFP"
 
 
@@ -275,7 +278,7 @@ def trunk(today: date) -> list[tuple]:
     ]
 
 
-SEED_DATA = Path(__file__).parent / "seed_data" / "demo_research.json"
+SEED_DATA = Path(__file__).parent / "fixtures" / "demo_research.json"
 
 
 def _stored(scenario_id: str, title: str) -> dict:
@@ -359,7 +362,7 @@ def ensure_demo(store) -> None:
     db.erase_person(DEMO_ID)  # an older demo: seed it again from scratch (event ids are deterministic)
     store.erase(DEMO_ID)
     person = db.upsert_person(Person(id=DEMO_ID, display_name="Demo", birth_year=2004,
-                                     personality=from_mbti(DEMO_MBTI).model_dump()))
+                                     personality=from_mbti(DEMO_MBTI).model_dump()), token_hash=security.token_hash(DEMO_TOKEN))
     today = date.today()
     events = [
         LifeEvent(id=sha1(f"demo|{when}|{kind}|{text}".encode()).hexdigest()[:16], person_id=DEMO_ID, source="scraped",

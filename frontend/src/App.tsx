@@ -116,15 +116,15 @@ export default function App() {
   const islandAvailable = !!World && hasWebGL && !worldFailed
   const view: Mode = islandAvailable ? mode : 'line'
 
-  useEffect(() => void getApi().then(setApi), [])
+  const [bootError, setBootError] = useState(false)
+  useEffect(() => void getApi().then(setApi).catch(() => setBootError(true)), [])
 
-  // Your own life is the demo: a stored session opens that person's own main and decisions.
-  // The sample person is only ever at ?person=demo, or behind "see an example".
+  // A stored session opens that person's own main and decisions.
   const views = ownViews
   const scenarios = ownScenarios
   const trunk = ownTrunk
   useEffect(() => {
-    if (api?.offline && !session) setSession({ person_id: 'demo', token: 'demo' })
+    if (api?.offline && !session) setSession({ person_id: 'offline', token: 'offline' })
   }, [api, session])
 
   const refresh = useCallback(async () => {
@@ -444,7 +444,14 @@ export default function App() {
     }
   }, [api, watch])
 
-  if (!api) return <div className="boot" />
+  if (!api) {
+    return bootError ? (
+      <div className="boot boot--error" role="alert">
+        <p>Hereafter can’t reach its backend.</p>
+        <p>Start it (uvicorn on port 8642), then reload this page.</p>
+      </div>
+    ) : <div className="boot" />
+  }
 
   const firstRun = !session
   const showOffering = firstRun || sheet === 'offering' || ingested !== null
@@ -494,7 +501,7 @@ export default function App() {
           <header className="h-brand">
             <button type="button" className="h-fold" onClick={() => rails.toggle('left')} title="Fold this panel away" aria-label="Fold the decisions panel away">‹</button>
             <h1>Hereafter</h1>
-            <p>{trunk?.person.display_name || ''}{trunk?.person.personality?.mbti ? ` · ${trunk.person.personality.mbti}` : ''}{api.offline ? ' · sample' : ''}</p>
+            <p>{trunk?.person.display_name || ''}{trunk?.person.personality?.mbti ? ` · ${trunk.person.personality.mbti}` : ''}{api.offline ? ' · no data' : ''}</p>
           </header>
           <Decisions
             scenarios={scenarios}
@@ -545,7 +552,6 @@ export default function App() {
 
         <div className="hud__bottom">
           {hint && !deciding && <p className="h-hint" key={hint}>{hint}</p>}
-          {!deciding && scenarios.length === 0 && session && session.person_id !== 'demo' && <a className="h-link h-hint__example" href="?person=demo">See an example</a>}
           {deciding && session ? (
             <NewDecision inside={assuming ? assuming.branch.label : null} busy={busy === 'decide'} error={error} onCreate={(d, ps) => void createDecision(d, ps)} onClose={() => setDeciding(false)} />
           ) : null}
@@ -606,7 +612,6 @@ export default function App() {
           result={ingested}
           onSubmit={offer}
           onEnter={() => (setIngested(null), setSheet(null), void refresh())}
-          onDemo={() => setSession({ person_id: 'demo', token: 'demo' })}
           onClose={() => setSheet(null)}
         />
       )}

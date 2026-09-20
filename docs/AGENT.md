@@ -15,8 +15,8 @@ cd backend
 .venv/bin/pip install -r requirements.txt       # once (adds `rich`, for the tables)
 # put OPENAI_API_KEY in the repo's .env
 
-.venv/bin/python -m app.agent --fixtures        # the built-in test people: dev, maya, sam
-.venv/bin/python -m app.agent --fixture dev \
+.venv/bin/python -m app.agent --fixtures        # fixture people you have added (the repo ships none)
+.venv/bin/python -m app.agent --person <person_id> \
     -q "Should I take the seed-stage startup offer in Berlin, stay at Acme, or start my own company?"
 ```
 
@@ -39,7 +39,7 @@ Use a real person from the app's store instead of a test person: `--person p_abc
 
 ## What a real run looks like
 
-From the built-in `dev` person (a backend engineer weighing a Berlin startup, staying, or founding
+From a test person (a backend engineer weighing a Berlin startup, staying, or founding
 something). Real output, lightly trimmed:
 
 ```
@@ -131,7 +131,7 @@ session is marked with it, so later work can start from that path with everythin
 | `verify.py` | The receipts and question checks. **No language model.** |
 | `questions.py` | Chooses wording (model), checks it, retries once, falls back. |
 | `prompts.py` | Every instruction the model gets, and the shape of what it returns. |
-| `context.py`, `fixtures/` | What the agent knows: loads test people or a real person; numbers the items. |
+| `context.py` | What the agent knows: loads a real person (or a fixture JSON you add under `fixtures/`); numbers the items. |
 | `memory.py`, `model.py` | The markdown memory file; the saved state. |
 
 ## Settings that can be tuned
@@ -157,7 +157,7 @@ verbatim, invented names and numbers are rejected, a requirement with no evidenc
 that can't change the outcome isn't asked, the cap of three, skipped questions never repeat, a made-up
 free-text interpretation is ignored, and a saved session loads back exactly.
 
-To judge question quality against the real model, run each built-in person (`dev`, `maya`, `sam`)
+To judge question quality against the real model, run it on a few real people (or fixture files you write)
 and check:
 
 - every question quotes something real about that person (the quote is checked, but is it *relevant*?);

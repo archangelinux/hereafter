@@ -1,6 +1,6 @@
 // Client for docs/API.md (v1 + v2). Two safety nets, both silent apart from a console.info:
-//  * if /api/health cannot be reached at boot (or ?offline is set), every call is served from
-//    the in-memory fixture;
+//  * if ?offline is set, every call is served from the (empty) in-memory sandbox; if /api/health cannot be
+//    reached otherwise, getApi rejects and the app says the backend is not running;
 //  * if the live backend does not have a v2 route yet (404/405), that one call is answered
 //    from what the client can derive locally, and the route is remembered in `api.missing`.
 
@@ -38,7 +38,6 @@ const SESSION_KEY = 'hereafter.session'
 
 export function loadSession(): Session | null {
   const asked = new URLSearchParams(location.search).get('person')
-  if (asked === 'demo') return { person_id: 'demo', token: 'demo' }
   try {
     const raw = localStorage.getItem(SESSION_KEY)
     const s = raw ? (JSON.parse(raw) as Session) : null
@@ -80,7 +79,7 @@ async function http<T>(path: string, init?: RequestInit & { timeoutMs?: number }
       }
       // The stored person no longer exists (erased, or a fresh database): start over quietly
       // at the Offering instead of leaving the world in a half-loaded state.
-      if ((res.status === 401 || res.status === 403) && token && token !== 'demo' && localStorage.getItem(SESSION_KEY)) {
+      if ((res.status === 401 || res.status === 403) && token && localStorage.getItem(SESSION_KEY)) {
         clearSession()
         location.replace(location.pathname)
       }
@@ -366,16 +365,19 @@ let chosen: Promise<Api> | null = null
 
 export function getApi(): Promise<Api> {
   if (!chosen) {
-    // ?offline forces the fixture: a stage fallback that needs no network at all
+    // ?offline opens the empty offline sandbox, which needs no network at all
     const forced = new URLSearchParams(location.search).has('offline')
     chosen = (forced ? Promise.reject(new Error('offline')) : http<Health>('/health', { timeoutMs: 1500 }))
       .then((h) => {
         if (!h?.ok) throw new Error('unhealthy')
         return liveApi()
       })
-      .catch(() => {
-        console.info('[hereafter] backend unreachable; using the offline sample')
-        return createFixture()
+      .catch((err) => {
+        // Only an explicit ?offline opens the (empty) sandbox. A backend that cannot be reached is an error
+        // the person must see: quietly showing something else would let them upload into the void.
+        if (forced) return createFixture()
+        console.info('[hereafter] backend unreachable', err)
+        throw err
       })
   }
   return chosen

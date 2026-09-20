@@ -16,7 +16,6 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from . import config
 
-DEMO_ID, DEMO_TOKEN = "demo", "demo"
 _fernet: Fernet | None = None
 
 

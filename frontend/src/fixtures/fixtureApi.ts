@@ -1,5 +1,5 @@
-// The offline sample, behaving like the backend: scenarios branch, commits re-draw and undo,
-// merges are permanent, research plays back over a few seconds.
+// The offline sandbox, behaving like the backend: scenarios branch, commits re-draw and undo,
+// merges are permanent, research plays back over a few seconds. It holds no sample data (see demo.ts).
 
 import { applyPatch, LOCAL_MODEL, type Api } from '../api'
 import { compareViews, plainChapter } from '../derive'
@@ -55,7 +55,7 @@ export function createFixture(): Api {
     offline: true,
     missing: new Set(),
     async createPerson() {
-      return { person_id: demoPerson.id, token: 'demo' }
+      return { person_id: demoPerson.id, token: 'offline' }
     },
     async trunk() {
       return { person: demoPerson, now: new Date().toISOString(), events: [...events], state: demoState, agent_log: [], reconciliation: [] }
@@ -76,7 +76,9 @@ export function createFixture(): Api {
       const id = `sc-local-${++counter}`
       const made: BranchView[] = options.map((o, i) => {
         // a long horizon borrows the long sample lives; anything else borrows tonight's
-        const template = views.filter((v) => v.branch.scenario_id === (horizon?.unit === 'years' || extra?.scale === 'big' ? 'sc-job' : 'sc-friday'))[i % (horizon?.unit === 'years' || extra?.scale === 'big' ? 3 : 2)]
+        const pool = views.filter((v) => v.branch.scenario_id === (horizon?.unit === 'years' || extra?.scale === 'big' ? 'sc-job' : 'sc-friday'))
+        const template = pool[i % pool.length]
+        if (!template) throw new Error('The offline sandbox has no sample data to imagine a decision from. Start the backend.')
         const bid = `br-local-${++counter}`
         const copy: BranchView = structuredClone(template)
         copy.branch = {

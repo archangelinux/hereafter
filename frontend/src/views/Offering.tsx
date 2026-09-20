@@ -18,12 +18,11 @@ interface Props {
   result: IngestResult | 'silent' | null // 'silent': the request itself failed; say nothing alarming
   onSubmit: (v: OfferingDraft) => void
   onEnter: () => void
-  onDemo: () => void
   onClose?: () => void
 }
 
 /** The one intake surface: words, files, handles. All optional, any combination. */
-export function Offering({ busy, firstRun, result, onSubmit, onEnter, onDemo, onClose }: Props) {
+export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }: Props) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [handles, setHandles] = useState<Handles>({})
@@ -123,7 +122,6 @@ export function Offering({ busy, firstRun, result, onSubmit, onEnter, onDemo, on
 
         <div className="setup__actions">
           <button type="submit" className="setup__primary" disabled={busy}>{busy ? 'Reading…' : 'Continue'}</button>
-          {firstRun && <button type="button" className="setup__link" onClick={onDemo}>Skip and explore an example</button>}
         </div>
       </form>
     </div>

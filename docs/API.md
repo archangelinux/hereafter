@@ -106,7 +106,7 @@ no lines.
 
 `/carry` is allowed once per branch, and only on a faded or expired branch.
 
-A demo person `demo` is seeded on first start so the scene is never empty.
+Nothing is seeded: a fresh start holds no people, events or decisions. Everything in the app is what the person gave it.
 
 ---
 
@@ -120,8 +120,7 @@ log. Never "git".
 
 `POST /people {display_name?, birth_year?, sex?}` → `{person_id, token}`. `person_id` is random.
 Every other route requires `Authorization: Bearer <token>` and rejects a token that does not
-belong to the `person_id` being touched (401/403). The seeded demo person is `demo` with token
-`demo`. `/health` is open.
+belong to the `person_id` being touched (401/403). `/health` is open.
 
 ## New and changed types
 
@@ -294,8 +293,7 @@ found). While forming, a branch cannot take commits or be merged (409) and `/com
 `POST /scenarios/{id}/answers` works the same way: answers are written to main at once, the affected branches come back
 with `forming: true` and their previous years still readable, and are rebuilt in the background. It returns 409 while
 the scenario is still forming. Background also runs under month horizons of twelve or more (one background year per
-twelve steps). `demo` evidence marked kind "researched" was really researched on its `retrieved_at` date and is stored in
-`backend/app/seed_data/demo_research.json`; rerun `python -m app.seed_research` to refresh it.
+twelve steps).
 
 ## Scale, and dates instead of step counts
 
@@ -325,7 +323,7 @@ narration are told to use dates too. (`Horizon.tonight` is still returned but no
   `"your words"`).
 - `GET /inventory` adds `offerings: [{origin, count, newest, source}]`.
 - `POST /forget {person_id, origin}` → `{origin, removed}` removes everything on main that came
-  from that one offering (owner only; not available on `demo`). Narrower than `/erase`, same
+  from that one offering (owner only). Narrower than `/erase`, same
   principle. Re-offering the same file later adds the events back; offering it twice never
   duplicates them (event ids are deterministic).
 
@@ -408,7 +406,7 @@ outlook[key].probability                            // cumulative for the option
 `model.events` is sorted by `probability`, most likely first; the simulation itself uses a canonical order, so display
 order never changes the lives. `breakdown.base.value` for an estimate is the midpoint of `range`. `breakdown.personality`
 is `[]` when the person has no personality estimate or no trait bears on the event. Branches simulated before v2.5 are
-re-simulated once at startup (`revision` bumps). The demo person now has an MBTI type so its breakdowns show shifts.
+re-simulated once at startup (`revision` bumps).
 `GET /model` is open (no token); the same text is `docs/MODEL.md`.
 
 ---
@@ -488,5 +486,4 @@ converted. `PossibleEvent += { effects, money_amount, effects_basis, money_kind 
 would belong to the moment). `/compare` adds `measures: {[branch_id]: end}` and `money_end: {[branch_id]: money_end|null}`.
 `POST /people` and `/ingest` accept `income`, `net_worth`, `currency`; `/ingest` also picks them up from the person's own words
 when stated; `/trunk.person.money`, `/ingest.money` and `/inventory.money` return them. With the LLM off all effects are zero.
-`Scenario += { scale_chosen, assuming_at, fork_at, assumed_facts }`. The demo person now has three scenarios: `demo-offer` (big,
-three paths), `demo-tonight` (small, two paths) and `demo-farewell` (small, decided three weeks ago: one merged path, one faded).
+`Scenario += { scale_chosen, assuming_at, fork_at, assumed_facts }`.

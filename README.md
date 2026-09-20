@@ -8,7 +8,7 @@ life. Paths you don't take fade. Paths you wait too long on expire.
 
 Give it a person's context (LinkedIn, GitHub, Instagram, chat history) and a decision, and it asks at
 most three questions, each chosen by arithmetic because its answer would most change what to do, then
-saves everything it learned. Try it: `cd backend && .venv/bin/python -m app.agent --fixture dev -q "Berlin startup or stay at Acme?"`.
+saves everything it learned. Try it: `cd backend && .venv/bin/python -m app.agent --person <person_id> -q "Berlin startup or stay at Acme?"`.
 Full guide in [docs/AGENT.md](docs/AGENT.md).
 
 ## Run it
@@ -21,11 +21,12 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # frontend
 cd frontend
-npm install && npm run dev     # http://localhost:5642/?person=demo
+npm install && npm run dev     # http://localhost:5642
 ```
 
-With no `.env` at all this runs: local event store, LLM off, a seeded `demo` person with two open
-paths. Copy `.env.example` to `.env` to switch on Elastic, Browserbase and the LLM.
+The app starts empty: no seeded person, no sample decisions. You tell it about yourself on first run.
+With no `.env` at all this runs on the local event store with the LLM off. Copy `.env.example` to `.env` to
+switch on Elastic, Browserbase and the LLM.
 
 **The "not a wrapper" proof:** `HEREAFTER_LLM=off`. Every future is still simulated, every path
 still has solidity, expiry, merge and carry still work; events simply render as their raw

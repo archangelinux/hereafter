@@ -25,6 +25,9 @@ ul, ol { padding: 0; list-style: none; }
 .caps { font-family: var(--font-body); font-style: normal; font-variant: normal; font-weight: 500; text-transform: none; letter-spacing: 0; font-size: var(--size-label); line-height: var(--leading-label); color: var(--color-text-2); }
 .dim { color: var(--color-text-2); }
 .boot { height: 100%; }
+.boot--error { display: grid; place-content: center; gap: 6px; text-align: center; padding: 24px; color: var(--color-text-2); }
+.boot--error p { margin: 0; }
+.boot--error p:first-child { color: var(--color-text); font-weight: 500; }
 button:disabled { cursor: default; opacity: 0.6; }
 :focus-visible { outline: 1px dashed var(--color-coral-deep); outline-offset: 4px; }
 

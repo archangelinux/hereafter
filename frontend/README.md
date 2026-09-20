@@ -6,8 +6,8 @@ npm run dev        # http://localhost:5642 — proxies /api → http://127.0.0.1
 npm run build      # tsc --noEmit && vite build
 ```
 
-- `?person=demo` opens the seeded demo person (token `demo`). `?offline` forces the in-memory sample
-  (`src/fixtures`), which is also what loads by itself when `/api/health` is unreachable.
+- There is no sample person. If `/api/health` cannot be reached the app says the backend is not running. `?offline` opens an
+  empty in-memory sandbox (`src/fixtures`, which holds no data) for working on the UI without a backend.
 - `?view=line|island`, `?branch=<id>`, `?sheet=composer|compare|log|inventory`, `?read` open a given state.
 
 Two views of the same place, one HUD over both (`V` switches; the choice is remembered):

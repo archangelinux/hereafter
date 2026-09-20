@@ -3,9 +3,12 @@
 Everything runs offline with a scripted fake in place of the language model.
 """
 
+import json
+
 import pytest
 
 from app.agent import questions, uncertainty, verify
+from app.agent import context
 from app.agent.context import Context, fixture_names
 from app.agent.engine import MAX_QUESTIONS, Agent, AgentError
 from app.agent.model import Choice, Cite, ContextItem, Event, Gate, Priorities, Route, Session
@@ -372,16 +375,47 @@ def test_when_the_judge_is_down_it_says_so_and_asks_only_about_priorities(tmp_pa
 
 # --- context and fixtures ---
 
+# The repo ships no built-in people. A fixture is just a JSON file of numbered items and a line about them;
+# these tests write one into a temporary folder and point the loader there.
+FIXTURE = {
+    "about": "a test engineer",
+    "items": [
+        {"source": "linkedin", "date": "2026-09", "text": "Senior Backend Engineer at Acme Payments, Toronto, since 2022. Led the ledger migration to services."},
+        {"source": "linkedin", "date": "2022-05", "text": "Software Engineer at a payments company; built a Rust reconciliation tool."},
+        {"source": "github", "date": "2026-07", "text": "Maintains an open-source Rust command-line tool for ledgers with 340 stars."},
+        {"source": "github", "date": "2026-02", "text": "Contributed a fix to a distributed database project."},
+        {"source": "instagram", "date": "2026-08", "text": "Photos from a climbing trip in Squamish."},
+        {"source": "chat", "date": "2026-08", "text": "Asked how startup equity and vesting cliffs work."},
+        {"source": "chat", "date": "2026-09", "text": "Asked how much runway a founder should have saved before quitting a job."},
+        {"source": "told", "date": "2026-09", "text": "Said they might relocate for the right offer."},
+    ],
+}
 
-def test_the_built_in_people_load_with_numbered_items_from_several_sources():
-    assert set(fixture_names()) >= {"maya", "dev", "sam"}
-    for name in fixture_names():
-        c = Context.from_fixture(name)
-        assert [i.id for i in c.items] == list(range(1, len(c.items) + 1))
-        assert len({i.source for i in c.items}) >= 3 and c.about
+
+@pytest.fixture()
+def people(tmp_path, monkeypatch):
+    folder = tmp_path / "people"
+    folder.mkdir()
+    (folder / "dev.json").write_text(json.dumps(FIXTURE))
+    monkeypatch.setattr(context, "FIXTURES", folder)
+    return folder
 
 
-def test_told_items_are_always_kept_and_numbering_never_changes():
+def test_a_fixture_file_loads_with_numbered_items_from_several_sources(people):
+    assert fixture_names() == ["dev"]
+    c = Context.from_fixture("dev")
+    assert [i.id for i in c.items] == list(range(1, len(c.items) + 1))
+    assert len({i.source for i in c.items}) >= 3 and c.about
+
+
+def test_with_no_fixtures_there_are_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(context, "FIXTURES", tmp_path / "nothing-here")
+    assert fixture_names() == []
+    with pytest.raises(SystemExit):
+        Context.from_fixture("dev")
+
+
+def test_told_items_are_always_kept_and_numbering_never_changes(people):
     c = Context.from_fixture("dev")
     told = c.add_told("Asked “x” — they said: I could relocate")
     assert told.id == len(c.items) and told.source == "told"
@@ -389,7 +423,7 @@ def test_told_items_are_always_kept_and_numbering_never_changes():
     assert len(few) == 5 and told in few and [i.id for i in few] == sorted(i.id for i in few)
 
 
-def test_the_cli_runs_a_scripted_conversation_end_to_end(tmp_path, monkeypatch):
+def test_the_cli_runs_a_scripted_conversation_end_to_end(tmp_path, monkeypatch, people):
     from app.agent import cli
 
     monkeypatch.setenv("HEREAFTER_SESSIONS", str(tmp_path))

@@ -12,8 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 
 
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
+def _fresh(tmp_path, monkeypatch):
     from app import config, db, state, store
 
     monkeypatch.setattr(config, "CACHE_DIR", tmp_path / "cache")
@@ -21,11 +20,35 @@ def client(tmp_path, monkeypatch):
     db.reset(tmp_path / "test.db")
     store.reset()
     state._cache.clear()
+
+
+@pytest.fixture()
+def bare_client(tmp_path, monkeypatch):
+    """The app exactly as it starts for a real person: nothing seeded, nobody known."""
+    _fresh(tmp_path, monkeypatch)
+    from app import db, store
     from fastapi.testclient import TestClient
     from app.main import app
 
     with TestClient(app) as c:
-        c.headers["Authorization"] = "Bearer demo"
+        yield c
+    db.reset()
+    store.reset()
+
+
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    """The app with the test person from seed_demo.py (id and bearer token "demo") already in it.
+    Only the tests seed anything; the app never does."""
+    _fresh(tmp_path, monkeypatch)
+    from app import db, store
+    from fastapi.testclient import TestClient
+    from app.main import app
+    import seed_demo
+
+    with TestClient(app) as c:
+        seed_demo.ensure_demo(store.get_store())
+        c.headers["Authorization"] = f"Bearer {seed_demo.DEMO_TOKEN}"
         yield c
     db.reset()
     store.reset()

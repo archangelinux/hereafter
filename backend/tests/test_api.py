@@ -52,7 +52,7 @@ CHAT = "\n".join(f"[2026-08-{d:02d}, 9:1{d % 10}:00 PM] {who}: secret words {d}"
                  for d in range(1, 29) for who in ("Robin", "Sam Lee", "Priya"))
 
 
-def test_runs_with_llm_off_and_seeds_a_demo(client):
+def test_runs_with_llm_off_and_reads_the_seeded_test_person(client):
     health = client.get("/health").json()
     assert health["llm_enabled"] is False and health["store"] == "local"
     trunk = client.get("/trunk", params=DEMO).json()
@@ -274,7 +274,6 @@ def test_inventory_then_erase_leaves_nothing(client):
         assert db.conn().execute(f"SELECT COUNT(*) FROM {table} WHERE {column}=?", (pid,)).fetchone()[0] == 0
     assert db.conn().execute("SELECT COUNT(*) FROM chapters WHERE branch_id=?", (branch,)).fetchone()[0] == 0
     assert client.get("/trunk", params={"person_id": pid}, headers=auth).status_code == 401
-    assert client.post("/erase", json={"person_id": "demo", "confirm": "erase"}).status_code == 409
 
 
 def test_concurrent_reads_do_not_fail_or_blank_the_person(client):
@@ -523,9 +522,10 @@ def test_background_runs_under_long_month_horizons_only(background, client):
     assert "city" not in short["years"][0]["outlook"] and len(short["years"]) == 5
 
 
-def test_the_demo_carries_real_stored_research_rechecked_at_seed_time(client):
+def test_the_test_person_carries_real_stored_research_rechecked_at_seed_time(client):
     import json
-    from app import outcome_model, seed
+    import seed_demo as seed
+    from app import outcome_model
 
     stored = json.loads(seed.SEED_DATA.read_text())
     rates = [(k, r) for k, v in stored["branches"].items() for r in v["rates"]]

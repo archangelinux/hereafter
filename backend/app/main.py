@@ -23,7 +23,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import ticket, branches as branch_ops
-from . import config, db, llm, model_card, research, security, seed
+from . import config, db, llm, model_card, research, security
 from . import scenarios as scenarios_ops
 from .ingest import links, pipeline
 from .models import (AnswersRequest, EditRequest, Branch, BranchView, CommitRequest, EraseRequest, ForgetRequest, LifeEvent, MergeRequest,
@@ -50,10 +50,6 @@ COMPARE_EVERY = 5
 async def lifespan(_: FastAPI):
     db.conn()
     security.fernet()
-    try:
-        seed.ensure_demo(get_store())
-    except Exception:
-        log.exception("could not seed the demo person")
     try:
         moved = branch_ops.migrate()
         if moved:
@@ -86,8 +82,7 @@ def owner(token: str, person_id: str) -> Person:
     person = db.get_person(person_id)
     if person is None:
         raise HTTPException(401, "unknown person")
-    is_demo = person_id == security.DEMO_ID and token == security.DEMO_TOKEN
-    if not is_demo and not security.token_matches(token, db.person_token_hash(person_id)):
+    if not security.token_matches(token, db.person_token_hash(person_id)):
         raise HTTPException(403, "this token does not belong to that person")
     return person
 
@@ -502,8 +497,6 @@ def forget(req: ForgetRequest, token: str = Depends(bearer)):
     Narrower than erase, same principle — the past cannot be rewritten, but what you gave can be
     taken back. Open branches keep their shape until they are next re-simulated."""
     owner(token, req.person_id)
-    if req.person_id == security.DEMO_ID:
-        raise HTTPException(409, "the demo person reseeds itself")
     removed = get_store().forget(req.person_id, req.origin)
     from . import state as state_module
     for key in [k for k in state_module._cache if k[0] == req.person_id]:
@@ -514,8 +507,6 @@ def forget(req: ForgetRequest, token: str = Depends(bearer)):
 @app.post("/erase")
 def erase(req: EraseRequest, token: str = Depends(bearer)):
     owner(token, req.person_id)
-    if req.person_id == security.DEMO_ID:
-        raise HTTPException(409, "the demo person reseeds itself and cannot be erased here")
     if req.confirm != "erase":
         raise HTTPException(400, 'confirm with the word "erase"')
     if any(b.forming or b.research in ("pending", "running") for b, _ in db.list_branches(req.person_id)):

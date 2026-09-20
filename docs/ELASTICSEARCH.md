@@ -275,6 +275,6 @@ cd backend
 .venv/bin/python -m pytest -q                             # 104 tests, LLM off, LocalStore
 
 # the agent's logged query choices and the reconciliation rulings
-curl -s -H "Authorization: Bearer demo" "http://127.0.0.1:8642/trunk?person_id=demo" \
+curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8642/trunk?person_id=$PERSON_ID" \
   | jq '.agent_log, .reconciliation'
 ```
