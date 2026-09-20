@@ -17,7 +17,7 @@ import type { BranchView, IngestResult, Insets, ResearchStep, TicketPatch, LifeE
 import { Analysis } from './views/Analysis'
 import { Compare } from './views/Compare'
 import { Connecting, connectingMs } from './views/Connecting'
-import type { Platform } from './views/platforms'
+import { PLATFORMS, type Platform } from './views/platforms'
 import { InventoryView } from './views/InventoryView'
 import { LogView } from './views/LogView'
 import { ModelSheet } from './views/ModelSheet'
@@ -358,8 +358,8 @@ export default function App() {
         setSession(s)
       }
       const result = await api.ingest({
-        person_id: s.person_id, text: draft.text || undefined,
-        files: draft.files, // draft.sources (the accounts chosen) is not sent yet: reading them comes with the Browserbase hookup
+        person_id: s.person_id, text: [draft.text, ...PLATFORMS.filter((p) => p.url && draft.sources.includes(p.key)).map((p) => p.url)].filter(Boolean).join('\n') || undefined,
+        files: draft.files, // the chosen accounts go along as their profile links; reading them properly comes with the Browserbase hookup
       })
       // hold the connecting screen for its whole length, so a quick answer does not make it flash
       if (draft.sources.length) await new Promise((r) => setTimeout(r, Math.max(0, connectingMs(draft.sources.length) - (Date.now() - started))))
