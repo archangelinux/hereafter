@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { scaleOf } from '../derive'
 import { dayLabel } from '../format'
-import { theme } from '../theme'
-import { TinyMarks } from './MeasuresBlock'
 import type { BranchView, Scenario, TicketPatch } from '../types'
 
 interface ExamplesEntry {
@@ -14,26 +12,22 @@ interface ExamplesEntry {
 interface Props {
   scenarios: Scenario[]
   views: BranchView[]
-  activeId: string | null
   focusId: string | null
   onFocus: (scenarioId: string) => void
-  onOpen: (branchId: string) => void
   onNew: () => void
   onEdit: (scenario: Scenario, patch: TicketPatch) => void
   examples?: ExamplesEntry | null
 }
 
-const PATH_WORD: Record<string, string> = { merged: 'chosen', faded: 'not taken', stale: 'closed', expired: 'closed' }
-
-/** The decisions, as a plain list: a row per decision, its paths indented beneath, the selected one filled. */
-export function Decisions({ scenarios, views, activeId, focusId, onFocus, onOpen, onNew, onEdit, examples }: Props) {
+/** The decisions still to make, as a plain list: a row per decision, the one being considered marked. Decided ones live in the log; the paths live in the panel on the right. */
+export function Decisions({ scenarios, views, focusId, onFocus, onNew, onEdit, examples }: Props) {
   const [editing, setEditing] = useState<string | null>(null)
   const list = useRef<HTMLUListElement>(null)
-  // the path being lived is always in view
+  // the decision being considered is always in view
   useEffect(() => {
-    list.current?.querySelector('.h-path.is-on')?.scrollIntoView({ block: 'nearest' })
-  }, [activeId, focusId])
-  const rows = scenarios.map((s) => {
+    list.current?.querySelector('.h-decision.is-focused')?.scrollIntoView({ block: 'nearest' })
+  }, [focusId])
+  const all = scenarios.map((s) => {
     const branches = s.branch_ids.flatMap((id) => views.filter((v) => v.branch.id === id))
     const live = branches.filter((b) => b.branch.status === 'open')
     const deadline = [...s.options.map((o) => o.deadline), ...live.map((b) => b.branch.precondition?.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? null)].filter((d): d is string => !!d).sort()[0] ?? null
@@ -42,15 +36,17 @@ export function Decisions({ scenarios, views, activeId, focusId, onFocus, onOpen
     const state = decided ? 'decided' : forming ? 'forming' : live.length === 0 ? 'closed' : 'open'
     return { s, branches, state, deadline, live: live.length > 0 }
   })
+  // decided decisions are history: they are in the log, as the merge that made them
+  const rows = all.filter((r) => r.state !== 'decided')
   rows.sort((a, b) => Number(b.live) - Number(a.live) || (a.deadline ?? '9999').localeCompare(b.deadline ?? '9999') || b.s.created_at.localeCompare(a.s.created_at))
 
   return (
-    <nav className="h-panel h-decisions" aria-label="decisions">
+    <nav className="h-panel h-decisions" aria-label="open decisions">
       <header className="h-panel__head">
-        <h2>{rows.length > 0 && rows.every((r) => r.s.example) ? 'Examples' : 'Decisions'}</h2>
+        <h2>{rows.length > 0 && rows.every((r) => r.s.example) ? 'Examples' : 'Open decisions'}</h2>
         <button type="button" className="h-link" onClick={onNew} title="Add a decision (N)">+ New</button>
       </header>
-      {rows.length === 0 && <p className="h-muted">None yet.</p>}
+      {rows.length === 0 && <p className="h-muted">{all.length > 0 ? 'None open. The ones you decided are in the log.' : 'None yet.'}</p>}
       <ul className="h-decisions__list" ref={list}>
         {rows.map(({ s, branches, state, deadline }) => {
           const edit = editing === s.id && state === 'open'
@@ -62,7 +58,7 @@ export function Decisions({ scenarios, views, activeId, focusId, onFocus, onOpen
                 {edit ? (
                   <input className="h-input" defaultValue={s.situation} aria-label="Rename this decision" onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== s.situation && onEdit(s, { situation: e.target.value.trim() })} />
                 ) : (
-                  <button type="button" className="h-decision__title" title={s.situation} onClick={() => onFocus(s.id)} aria-expanded={focused}>{s.situation}</button>
+                  <button type="button" className="h-decision__title" title={focused ? s.situation : `${s.situation} — consider this one`} aria-current={focused || undefined} onClick={() => onFocus(s.id)}>{s.situation}</button>
                 )}
                 {state === 'open' && focused && <button type="button" className="h-link h-decision__edit" onClick={() => setEditing(edit ? null : s.id)}>{edit ? 'Done' : 'Edit'}</button>}
               </div>
@@ -75,25 +71,14 @@ export function Decisions({ scenarios, views, activeId, focusId, onFocus, onOpen
                 <span>{s.example ? 'example · ' : ''}{state}{s.questions.some((q) => !q.answer) && state === 'open' ? ' · has a question' : ''}</span>
                 {edit ? <label>by <input className="h-input h-input--date" type="date" defaultValue={deadline ?? ''} onChange={(e) => onEdit(s, { decide_by: e.target.value || null })} /></label> : deadline && <span>by {dayLabel(deadline)}</span>}
               </p>
-              {focused && <ul className="h-paths">
-                {branches.map((b, i) => {
-                  const colour = b.branch.status === 'open' ? theme.branch[i % theme.branch.length] : theme.color.ruin
-                  return (
-                    <li key={b.branch.id}>
-                      {edit && b.branch.option_id ? (
-                        <input className="h-input" defaultValue={b.branch.label} aria-label="Rename this path" onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== b.branch.label && onEdit(s, { rename: { option_id: b.branch.option_id!, title: e.target.value.trim() } })} />
-                      ) : (
-                        <button type="button" className={`h-path ${b.branch.id === activeId ? 'is-on' : ''}`} onClick={() => onOpen(b.branch.id)} title="Select this path and live it">
-                          <i style={{ background: colour }} />
-                          <span>{b.branch.label}</span>
-                          {b.branch.measures && <TinyMarks measures={b.branch.measures} />}
-                          {PATH_WORD[b.branch.status] && <em>{PATH_WORD[b.branch.status]}</em>}
-                        </button>
-                      )}
-                    </li>
-                  )
-                })}
-                {edit && branches.length < 4 && (
+              {/* the paths are shown on the right; here they only appear as fields, while editing */}
+              {edit && <ul className="h-paths">
+                {branches.filter((b) => b.branch.option_id).map((b) => (
+                  <li key={b.branch.id}>
+                    <input className="h-input" defaultValue={b.branch.label} aria-label="Rename this path" onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== b.branch.label && onEdit(s, { rename: { option_id: b.branch.option_id!, title: e.target.value.trim() } })} />
+                  </li>
+                ))}
+                {branches.length < 4 && (
                   <li><input className="h-input" placeholder="Add a path" aria-label="Add a path" onKeyDown={(e) => { if (e.key === 'Enter' && e.currentTarget.value.trim()) { onEdit(s, { add_option: e.currentTarget.value.trim() }); e.currentTarget.value = '' } }} /></li>
                 )}
               </ul>}

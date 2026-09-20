@@ -1,6 +1,9 @@
 import type { Measure, Measures, Person } from '../types'
 
-const NAMES: Record<Measure, string> = { health: 'Health', joy: 'Joy, short term', fulfilment: 'Fulfilment, long term', money: 'Money' }
+/** The four measures as they are written for a reader. The wire keeps `money` as the key. */
+export const NAMES: Record<Measure, string> = { health: 'Health', joy: 'Joy, short term', fulfilment: 'Fulfilment, long term', money: 'Finance' }
+/** The same four in running prose, lowercase. */
+export const WORDS: Record<Measure, string> = { health: 'health', joy: 'joy', fulfilment: 'fulfilment', money: 'finance' }
 export const MEASURES: Measure[] = ['health', 'joy', 'fulfilment', 'money']
 export const markTone = (marks: string) => (marks.includes('+') ? 'plus' : marks.includes('−') || marks.includes('-') ? 'minus' : 'even')
 
@@ -55,7 +58,7 @@ export function MeasuresBlock({ measures, step, person }: { measures: Measures; 
 /** Four tiny marks, H J F $, so paths can be compared at a glance. */
 export function TinyMarks({ measures }: { measures: Measures }) {
   return (
-    <span className="h-tiny" aria-label="health, joy, fulfilment, money compared with now">
+    <span className="h-tiny" aria-label="health, joy, fulfilment, finance compared with now">
       {MEASURES.map((m, i) => {
         const marks = measures.end[m]?.marks ?? '='
         return <i key={m} className={`h-tiny--${markTone(marks)}`} title={`${NAMES[m]}: ${marks} compared with now`}>{marks[0] === '=' ? '·' : marks[0]}<sub>{'HJF$'[i]}</sub></i>

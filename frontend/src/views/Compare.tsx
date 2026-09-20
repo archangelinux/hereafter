@@ -3,7 +3,7 @@ import type { Api } from '../api'
 import { aspectLabel } from '../derive'
 import { theme } from '../theme'
 import type { BranchView, CompareResponse, Scenario } from '../types'
-import { MEASURES, markTone } from '../hud/MeasuresBlock'
+import { MEASURES, NAMES, markTone } from '../hud/MeasuresBlock'
 import { Sheet } from './Sheet'
 
 const pct = (x: number | undefined) => (x === undefined ? '' : `${Math.round(x * 100)}%`)
@@ -54,7 +54,7 @@ export function Compare({ api, views, scenario, onSwitch, onClose }: { api: Api;
               if (ends.every((x) => !x)) return null
               return (
                 <tr key={m}>
-                  <th>{m === 'joy' ? 'Joy, short term' : m === 'fulfilment' ? 'Fulfilment, long term' : m[0].toUpperCase() + m.slice(1)} <span className="dim">· compared with now</span></th>
+                  <th>{NAMES[m]} <span className="dim">· compared with now</span></th>
                   {ends.map((x, i) => <td key={i}>{x ? <b className={`h-tiny--${markTone(x.marks)}`}>{x.marks}</b> : '—'}</td>)}
                 </tr>
               )
@@ -62,7 +62,7 @@ export function Compare({ api, views, scenario, onSwitch, onClose }: { api: Api;
             {data.distinctive?.map((d) => (
               <tr key={d.branch_id + d.label}>
                 <th>{d.label} <span className="dim">· only here</span></th>
-                {branches.map((b) => <td key={b.id}>{b.id === d.branch_id ? <b>{pct(d.probability) || d.words}</b> : '—'}</td>)}
+                {branches.map((b) => <td key={b.id}>{b.id === d.branch_id ? <b>{pct(d.probability)}</b> : '—'}</td>)}
               </tr>
             ))}
             {rows.map((r) => (

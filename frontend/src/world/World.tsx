@@ -81,6 +81,7 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
   const [moved, setMoved] = useState(false)
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
   const walker = useRef<WalkerState>(newWalkerState())
+  const real = useRef<WalkerState>(newWalkerState())
 
   // branches first seen after the first paint grow outward; branches that vanish (an undo) draw back first
   const seen = useRef<Set<string> | null>(null)
@@ -258,7 +259,10 @@ export function World({ now, events, views, scenarios, activeId, hereStep, rare,
         {/* circles only where a decision is made; drawn over the bands that meet there */}
         <Plazas plazas={layout.plazas} still={still} onHover={setHoveredPlaza} onPick={(p) => (onFocusScenario ? onFocusScenario(p.id) : p.branchIds[0] && onSwitch(p.branchIds[0]))} />
         {active && rare && <RareStrand lane={active} years={rare} still={still} />}
-        <Walker layout={layout} target={target} state={walker} still={still} />
+        {/* the real you: always at now, never in a future */}
+        <Walker layout={layout} target={null} state={real} still />
+        {/* the ghost: the one that walks the futures */}
+        {active && <Walker layout={layout} target={target} state={walker} still={still} pale />}
       </Canvas>
       <LabelLayer specs={labels} els={labelEls} />
 

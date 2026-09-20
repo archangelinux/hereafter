@@ -108,9 +108,4 @@ export function InventoryView({ api, personId, onOffer, onErased, onChanged, onC
   )
 }
 
-/** Counts in words: the inventory is not the evidence drawer. */
-function words(n: number): string {
-  const small = ['none', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve']
-  if (n < small.length) return `${small[n]} ${n === 1 ? 'entry' : 'entries'}`
-  return n < 40 ? 'a few dozen entries' : n < 200 ? 'many dozens of entries' : 'hundreds of entries'
-}
+const words = (n: number) => `${n}`

@@ -1,6 +1,7 @@
-// Geometry of the line. Time runs upward. Main is lane 0. The scenario in focus peels away to
-// the right; every other scenario's branches sit to the left, so many small forks and a few long
-// ones can share one main without tangling. Pure functions: drawing and hit-testing agree.
+// Geometry of the line. Time runs upward and the shape is a tree: main is the trunk, and every
+// decision is a fork on it whose paths fan evenly to either side, out over a short elbow and then
+// straight up. A chosen path keeps the trunk, so the roads not taken splay around it and stay
+// drawn as stubs. Pure functions: drawing and hit-testing agree.
 //
 // Below now the scale is years. Above now it adapts to the focused scenario's horizon (a night,
 // weeks, months, decades), and each step keeps a minimum length so "tonight" is never a speck.
@@ -13,7 +14,8 @@ export const PAST_PX_PER_YEAR = 58
 const STEP_PX = 58 // a step of the focused scenario, on average
 const MIN_STEP_PX = 30
 const MIN_BRANCH_PX = 64 // a small decision is still a visible flourish
-const CLOSED_PX = 460 // how much of a road not taken stays drawn
+const CLOSED_PX = 460 // how much of a road not taken stays drawn, on the decision being considered
+const STUB_PX = 120 // and on every other decision: a stub on the trunk, where a path once left it
 const STALE_PX = 84
 const OFFSCREEN_PX = 1700 // other scenarios are not drawn beyond this above now
 
@@ -121,12 +123,11 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
   // a decision made inside another branch brings that branch along as context, on the right
   const contextId = focus?.assuming_branch_id ?? null
   const rightCount = (focus ? focus.branch_ids.filter((id) => byId.get(id)?.branch.status !== 'merged').length : 0) + (contextId ? 1 : 0)
-  const gap = Math.max(92, Math.min(164, (opts.width * 0.6) / (rightCount + 0.5)))
+  const gap = Math.max(92, Math.min(164, (opts.width * 0.6) / (Math.ceil(rightCount / 2) + 0.5)))
 
   const lanes: Lane[] = []
   const forks: LineLayout['forks'] = []
   const turns: [number, number][] = []
-  let leftCount = 0
   let projected: string | null = null
 
   for (const scenario of scenarios) {
@@ -134,16 +135,25 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
     const scale = scaleOf(scenario)
     const small = scale === 'small'
     const anyOpen = scenario.branch_ids.some((id) => byId.get(id)?.branch.status === 'open')
-    let rightLane = 0
-    scenario.branch_ids.forEach((id, i) => {
+    // a decision still open that nobody is looking at waits as a circle on main. A settled one never
+    // does: what was chosen and what was dropped both stay on the tree.
+    if (anyOpen && !isFocus && scenario.collapsed) continue
+    // the fan's slots: a step either side of the line this decision grew from, in the order the paths
+    // are listed. Nothing is ever given the middle — that belongs to the trunk, and to a path chosen.
+    const fan = scenario.branch_ids.map((id) => byId.get(id)).filter((v): v is BranchView => !!v && v.years.length > 0 && v.branch.status !== 'merged')
+    const order = Array.from({ length: fan.length }, (_, k) => (k % 2 === 0 ? 1 : -1) * (Math.floor(k / 2) + 1)).sort((a, b) => a - b)
+    const slots = new Map(fan.map((v, k) => [v.branch.id, order[k]]))
+    scenario.branch_ids.forEach((id) => {
       const view = byId.get(id)
       if (!view || view.years.length === 0) return
       const status = view.branch.status
       const merged = status === 'merged'
       const isContext = id === contextId
       const parent = scenario.assuming_branch_id ? (lanes.find((l) => l.view.branch.id === scenario.assuming_branch_id) ?? null) : null
-      const side: 1 | -1 = parent ? parent.side : isFocus || isContext ? 1 : -1
-      const laneX = merged ? 0 : parent ? ++rightLane * (isFocus ? gap * 0.82 : 40) * side : isFocus || isContext ? ++rightLane * gap * (small ? 0.62 : 1) : -(1 + (leftCount++ % 4)) * (small ? 34 : 64)
+      const slot = merged ? 0 : (slots.get(id) ?? 0)
+      const side: 1 | -1 = slot < 0 ? -1 : slot > 0 ? 1 : parent ? parent.side : 1
+      const spacing = parent ? (isFocus ? gap * 0.82 : 46) : isFocus || isContext ? gap * (small ? 0.62 : 1) : small ? 42 : 76
+      const laneX = slot * spacing
       const fork = Math.min(yearOf(view.branch.forked_at), now)
       // inside another life: leave from a little way up that branch, not from main
       const from = parent ? parent.pos(Math.min(parent.endS, 0.9)) : null
@@ -178,18 +188,17 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
         endS = continues ? total : Math.min(total, sWhere(small ? 44 : 120))
         // a life decision turns main itself along the chosen lane; a small one is only a handle on it
       } else if (status === 'stale') endS = sWhere(small ? 36 : STALE_PX)
-      else if (status === 'faded') endS = sWhere(small ? 44 : CLOSED_PX)
+      else if (status === 'faded') endS = sWhere(small ? 44 : isFocus ? CLOSED_PX : STUB_PX)
       if (!isFocus) endS = Math.min(endS, sWhere(Math.max(MIN_BRANCH_PX, forkY + OFFSCREEN_PX)))
 
-      const phase = (i + 1) * 1.7 + (isFocus ? 0 : 2.3)
       const pos = (s: number): Pt => {
         const y = yOfS(s)
         const d = forkY - y
         // merged: the choice itself is on main, so the path runs straight on from it, as a projection
         if (merged) return { x: 0, y }
-        const meander = Math.sin(d / 120 + phase) * 9 * smooth(d / 260)
         const base = parent ? parent.xAtY(y) : 0
-        return { x: base + laneX * smooth(d / (isFocus || isContext ? 150 : 90)) + meander, y }
+        // out to its slot over the first stretch, then straight up: an elbow, the way a branch leaves a trunk
+        return { x: base + laneX * smooth(d / (isFocus || isContext ? 120 : 76)), y }
       }
       const xAtY = (y: number) => {
         let lo = 0
@@ -223,7 +232,7 @@ export function layoutLine(opts: { now: string; events: LifeEvent[]; views: Bran
         if (s <= endS) nodes.push({ id: c.id, kind: 'commit', step: index, at: pos(s), normal: normalAt(pos, s), label: c.message, caption: stepDate(view.years[index].at, byYear), basis: 'background' })
       }
 
-      const labelS = merged ? (rejoinS ?? 1) / 2 : Math.min(endS - 0.1, sWhere(isFocus ? 150 + rightLane * 58 : 40))
+      const labelS = merged ? (rejoinS ?? 1) / 2 : Math.min(endS - 0.1, sWhere(isFocus ? 150 + Math.round(Math.abs(slot)) * 58 : 40))
       lanes.push({
         view, scale, focus: isFocus, side, forkY, endS, rejoinS, segments, nodes, pos, xAtY,
         hit: pathThrough(sample(pos, 0, endS)),

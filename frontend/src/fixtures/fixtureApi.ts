@@ -150,15 +150,18 @@ export function createFixture(): Api {
       const shown = Math.max(0, Math.min(steps.length, Math.floor((Date.now() - started) / RESEARCH_STEP_MS) + 1))
       return { branch_id: branchId, research: v.branch.research, steps: steps.slice(0, shown) }
     },
-    async commit(branchId, at, message, eventKey) {
+    async commit(branchId, at, message, eventKeys) {
       const year = +at.slice(0, 4)
       const v = find(branchId)
       if (v.branch.status !== 'open') throw new Error('Only an open branch can take a commit.')
       undoStack.set(branchId, [...(undoStack.get(branchId) ?? []), structuredClone(v)])
-      const commit: Commit = { id: `cm-${++counter}`, branch_id: branchId, year, at, message, patch: {}, created_at: new Date().toISOString() }
+      const pinned = eventKeys ?? []
+      const said = pinned.map((k) => v.branch.model.events.find((e) => e.key === k)?.label ?? k)
+      const words = said.length > 1 ? `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]} happen` : said.length === 1 ? `${said[0]} happens` : message
+      const commit: Commit = { id: `cm-${++counter}`, branch_id: branchId, year, at, message: words, patch: { event_keys: pinned }, created_at: new Date().toISOString() }
       v.branch.commits = [...v.branch.commits, commit]
       v.branch.revision += 1
-      v.branch.model = { events: v.branch.model.events.map((e, n) => (e.key === eventKey ? { ...e, probability: 1, words: 'certain: you committed it' } : { ...e, probability: e.probability === undefined ? undefined : Math.min(0.97, Math.max(0.03, e.probability + (n % 2 ? 0.08 : -0.06))) })).sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0)) }
+      v.branch.model = { events: v.branch.model.events.map((e, n) => (pinned.includes(e.key) ? { ...e, probability: 1, words: 'certain: you committed it' } : { ...e, probability: e.probability === undefined ? undefined : Math.min(0.97, Math.max(0.03, e.probability + (n % 2 ? 0.08 : -0.06))) })).sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0)) }
       // what follows a commit is redrawn: later events slip a step, and the thousand lives agree a little less
       const from = Math.max(0, v.years.findIndex((y) => y.at >= at))
       v.years = v.years.map((y, i) => (i <= from ? y : { ...y, solidity: Math.max(0.6, y.solidity * 0.94) }))

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import { belongsOnLine, dayLabel, deadlineOf, isByYear, preciseDate, stepDate, yearOf } from '../format'
 import { theme } from '../theme'
-import type { BranchView, BranchYear, Insets, LifeEvent, Scenario, Zone } from '../types'
+import type { BranchView, Insets, LifeEvent, Scenario, Zone } from '../types'
 import { placeLabels, type Candidate } from './labels'
-import { inkFor, layoutLine, layoutRare, type Lane, type LaneNode } from './layout'
+import { inkFor, layoutLine, type Lane, type LaneNode } from './layout'
 
 interface Props {
   now: string
@@ -12,7 +12,6 @@ interface Props {
   scenarios: Scenario[]
   activeId: string | null
   hereStep: number | null
-  rare: BranchYear[] | null // the rarest life on the active branch, when the reader has jumped to it
   onSwitch: (branchId: string) => void
   onSeek: (branchId: string, step: number) => void
   onOpenLog: () => void
@@ -36,8 +35,17 @@ export function accentOf(view: BranchView, scenarios: Scenario[]): string {
   return theme.branch[i % theme.branch.length]
 }
 
+/** The tree reads by colour alone: charcoal is the life you are living, an ink is a path still
+ *  open, weathered grey is a road not taken. One place, so the line, the ticks and the key agree. */
+export function inkOf(view: BranchView, scenarios: Scenario[]): string {
+  const s = view.branch.status
+  if (s === 'merged') return theme.color.text
+  if (s === 'faded' || s === 'stale' || s === 'expired') return theme.color.ruin
+  return accentOf(view, scenarios)
+}
 
-export function Line({ now, events, views, scenarios, activeId, hereStep, rare, onSwitch, onSeek, onOpenLog, compact = false, zones = NO_ZONES, free = NO_INSETS, leavingExamples = false, onFocusDecision }: Props) {
+
+export function Line({ now, events, views, scenarios, activeId, hereStep, onSwitch, onSeek, onOpenLog, compact = false, zones = NO_ZONES, free = NO_INSETS, leavingExamples = false, onFocusDecision }: Props) {
   const frame = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 560, h: 800 })
   const home = useMemo(() => ({ x: 0, y: 0, k: compact ? 0.4 : 1 }), [compact])
@@ -82,7 +90,6 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
   const mainEvents = events.filter((e) => e.branch_id === 'main' && e.event_type !== 'goal' && belongsOnLine(e))
   const goals = events.filter((e) => e.event_type === 'goal')
   const active = layout.lanes.find((l) => l.view.branch.id === activeId) ?? null
-  const rareLane = useMemo(() => (active && rare ? layoutRare(active, rare) : null), [active, rare])
 
   // every label is a candidate; placement is by priority: where you are, the branch you are on,
   // its rare offshoot, branch names, picked moments, and last main's log
@@ -101,7 +108,6 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
           onClick: () => onSeek(active.view.branch.id, n.step),
         })
       }
-      if (rareLane) c.push({ id: 'rare', kind: 'rare', priority: 1.5, anchor: rareLane.labelAt, prefer: active.side, colour, top: '', text: 'the rarest life here' })
     }
     for (const lane of layout.lanes) {
       const { branch } = lane.view
@@ -128,7 +134,7 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
     const blocked = [...zones.map(toGraph), ...(pennant ? [{ x: pennant.x - 128, y: pennant.y - 12, w: 128, h: 24 }] : []), { x: -9, y: layout.top - 200, w: 18, h: layout.yAt(layout.pastFrom) - layout.top + 200 }, { x: -96, y: -24, w: 92, h: 62 }]
     return placeLabels(c, blocked, toGraph({ x: 8, y: 8, w: size.w - 16, h: size.h - 16 }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compact, layout, active, rareLane, hereStep, leavingExamples, goals.length, mainEvents.length, zones, origin.x, origin.y, pan, size.w, size.h, scenarios])
+  }, [compact, layout, active, hereStep, leavingExamples, goals.length, mainEvents.length, zones, origin.x, origin.y, pan, size.w, size.h, scenarios])
 
   const onWheel = (e: ReactWheelEvent) => {
     if (e.ctrlKey || e.metaKey) setPan((p) => ({ ...p, k: Math.max(0.45, Math.min(2.2, p.k * Math.exp(-e.deltaY * 0.002))) }))
@@ -197,17 +203,9 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
             <path className="line__main-root" d={`M-7 ${layout.yAt(layout.pastFrom)} h14`} />
 
             {layout.lanes.map((lane) => (
-              <LaneInk key={`${lane.view.branch.id}:${lane.view.branch.forming}`} lane={lane} accent={accentOf(lane.view, scenarios)} active={lane === active} dim={!!active && lane !== active} fresh={fresh.has(lane.view.branch.id)} leaving={leavingExamples} />
+              <LaneInk key={`${lane.view.branch.id}:${lane.view.branch.forming}`} lane={lane} colour={inkOf(lane.view, scenarios)} active={lane === active} dim={!!active && lane !== active} fresh={fresh.has(lane.view.branch.id)} leaving={leavingExamples} />
             ))}
 
-            {rareLane && active && (
-              <g className="rare">
-                <path className="rare__ink" d={rareLane.d} stroke={accentOf(active.view, scenarios)} />
-                {rareLane.nodes.map((n) => (
-                  <Tick key={n.id} node={n} colour={accentOf(active.view, scenarios)} />
-                ))}
-              </g>
-            )}
 
             {layout.forks.filter((f) => !f.collapsed).map((f) =>
               f.scale === 'big' ? <path key={f.id} className="line__fork line__fork--big" d={`M${f.x - 10} ${f.y} L${f.x} ${f.y - 10} L${f.x + 10} ${f.y} L${f.x} ${f.y + 10} Z`} /> : <circle key={f.id} className="line__fork line__fork--small" cx={f.x} cy={f.y} r={3.5} />,
@@ -241,10 +239,11 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
             )
           })}
 
-          {/* the other decisions: one circle each on main. Its name on hover; a click brings it into focus. */}
-          {layout.forks.filter((f) => f.collapsed).map((f) => (
+          {/* every decision is a node on the tree — the ones waiting are only their circle. Name on
+              hover; a click brings it into focus, however long ago it was made. */}
+          {layout.forks.map((f) => (
             <g key={f.id} className="line__fork--collapsed">
-              <circle cx={f.x} cy={f.y} r={f.scale === 'big' ? 8 : 5} className={f.scale === 'big' ? 'line__fork line__fork--big' : 'line__fork line__fork--big line__fork--minor'} />
+              {f.collapsed && <circle cx={f.x} cy={f.y} r={f.scale === 'big' ? 8 : 5} className={f.scale === 'big' ? 'line__fork line__fork--big' : 'line__fork line__fork--big line__fork--minor'} />}
               <circle cx={f.x} cy={f.y} r={14} className="line__fork-hit" tabIndex={0} onClick={unlessDragged(() => onFocusDecision?.(f.id))} onKeyDown={(e) => e.key === 'Enter' && onFocusDecision?.(f.id)}><title>{f.label}</title></circle>
               {!compact && <text className="line__fork-name" x={f.x - 16} y={f.y + 4} textAnchor="end">{f.label}</text>}
             </g>
@@ -273,10 +272,14 @@ export function Line({ now, events, views, scenarios, activeId, hereStep, rare, 
 
       {!compact && <button type="button" className="h-link line__legend-toggle" style={{ left: free.left + 8, top: free.top + 12 }} onClick={() => setLegend((v) => !v)} aria-expanded={legend}>{legend ? 'Hide the key' : 'How to read the line'}</button>}
       {!compact && legend && <div className="line__legend" style={{ left: free.left + 8, top: free.top + 44 }}>
-        <span><i className="ink ink--sure" />almost always</span>
-        <span><i className="ink ink--usual" />usually</span>
-        <span><i className="ink ink--even" />as often as not</span>
-        <span><i className="ink ink--rare" />rarely</span>
+        <span><i className="ink ink--trunk" />what happened, and the path you are on</span>
+        <span><i className="ink ink--open" />a path still open</span>
+        <span><i className="ink ink--ruin" />a road not taken — it stays on the tree</span>
+        <hr />
+        <span><i className="ink ink--sure" />90% and over</span>
+        <span><i className="ink ink--usual" />70–89%</span>
+        <span><i className="ink ink--even" />45–69%</span>
+        <span><i className="ink ink--rare" />under 20%</span>
         <span><i className="mark mark--sourced" />from a published figure</span>
         <span><i className="mark mark--estimated" />an estimate</span>
         <span><i className="mark mark--commit" />your commit</span>
@@ -317,10 +320,8 @@ function Tick({ node, colour }: { node: LaneNode; colour: string }) {
   return <path className={`lane__tick lane__tick--${basis}`} stroke={colour} d={`M${a.x} ${a.y} L${b.x} ${b.y}`} />
 }
 
-function LaneInk({ lane, accent, active, dim, fresh, leaving }: { lane: Lane; accent: string; active: boolean; dim: boolean; fresh: boolean; leaving: boolean }) {
+function LaneInk({ lane, colour, active, dim, fresh, leaving }: { lane: Lane; colour: string; active: boolean; dim: boolean; fresh: boolean; leaving: boolean }) {
   const status = lane.view.branch.status
-  const closed = status === 'faded' || status === 'stale'
-  const colour = closed ? theme.color.ruin : accent
   return (
     <g className={`lane lane--${status} ${active ? 'lane--active' : ''} ${dim ? 'lane--dim' : ''} ${fresh ? 'lane--fresh' : ''} ${lane.view.branch.forming ? 'lane--forming' : ''} ${lane.view.branch.example ? 'lane--example' : ''} ${lane.view.branch.example && leaving ? 'lane--leaving' : ''}`}>
       {active && <path className="lane__halo" d={lane.hit} stroke={colour} />}
@@ -337,7 +338,7 @@ function LaneInk({ lane, accent, active, dim, fresh, leaving }: { lane: Lane; ac
             <path
               d={s.d}
               fill="none"
-              stroke={certain ? theme.color.text : colour}
+              stroke={colour}
               strokeWidth={ink.width + (active ? 0.8 : 0)}
               strokeDasharray={ink.dash}
               strokeLinecap="round"

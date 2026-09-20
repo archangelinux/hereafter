@@ -139,7 +139,7 @@ export interface Api {
   answer(scenarioId: string, answers: Record<string, string>): Promise<ScenarioResponse>
   research(branchId: string): Promise<ResearchResponse>
   /** `at` is the date of the step the change is made at */
-  commit(branchId: string, at: string, message: string, eventKey?: string): Promise<BranchView>
+  commit(branchId: string, at: string, message: string, eventKeys?: string[]): Promise<BranchView>
   undo(branchId: string, commitId?: string): Promise<BranchView>
   compare(ids: string[]): Promise<CompareResponse>
   chapter(branchId: string, at: string, which?: Which): Promise<Chapter>
@@ -254,8 +254,8 @@ function liveApi(): Api {
         notYet('Answering'),
       ),
     research: (id) => orLocally('/research', () => read(`/research?branch_id=${q(id)}`), () => ({ branch_id: id, research: 'none' as const, steps: [] })),
-    commit: (id, at, message, event_key) =>
-      orLocally('POST /branches/commits', async () => normaliseView(await post<BranchView>(`/branches/${q(id)}/commits`, { year: +at.slice(0, 4), at, message, ...(event_key ? { event_key } : {}) }, 180_000)), notYet('A commit')),
+    commit: (id, at, message, event_keys) =>
+      post<BranchView>(`/branches/${q(id)}/commits`, { year: +at.slice(0, 4), at, message, ...(event_keys?.length ? { event_keys } : {}) }, 180_000).then(normaliseView),
     undo: (id, commit_id) =>
       orLocally('POST /branches/undo', async () => normaliseView(await post<BranchView>(`/branches/${q(id)}/undo`, commit_id ? { commit_id } : {}, 120_000)), notYet('Undo')),
     compare: (ids) =>
@@ -318,7 +318,7 @@ export const LOCAL_MODEL: ModelCard = {
     { title: 'A base rate', text: 'Each possible event starts from a base rate: a published figure found by reading the web (with its source and the group it describes), a figure from the life-course tables, or, when nothing is published, an estimate drawn from a stated range.' },
     { title: 'Your personality', text: 'If Hereafter has a personality estimate for you, each trait can shift the odds a little. Published effects are used where they exist; otherwise a small assumed effect, labelled as assumed. Low-confidence estimates shift less.' },
     { title: 'Dependencies', text: 'Some events make others more or less likely (you cannot be home by eleven if you stayed past one). These multiply the odds.' },
-    { title: 'Commit and branch', text: 'While living a path you can commit a step (one thing you assume or do; the path stays one line and everything after is simulated again) or branch (split the path into two or more paths). Both can be undone. Only a merge, which records a choice on main, is permanent.' },
+    { title: 'Commit and branch', text: 'While living a path you can commit (tick what you would have happen, or say what you would do; the path stays one line and everything after it is simulated again, with what you pinned held true) or branch (split the path into two or more paths). Both can be undone. Only a merge, which records a choice on main, is permanent.' },
     { title: 'A thousand lives', text: 'The path is simulated a thousand times with those odds. The percentage shown is how many of the thousand contain the event. The story you read follows the most typical of them.' },
   ],
   constants: [{ name: '1,000', value: '', meaning: 'simulated lives per path' }],

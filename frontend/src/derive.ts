@@ -46,18 +46,10 @@ function backgroundValue(state: StateVector, aspect: Aspect): string {
   }
 }
 
-export function likelihoodWords(share: number): string {
-  if (share >= 0.9) return 'almost always'
-  if (share >= 0.7) return 'usually'
-  if (share >= 0.45) return 'as often as not'
-  if (share >= 0.2) return 'sometimes'
-  return 'rarely'
-}
-
 /** When a step arrives without an outlook, the background aspects borrow its overall solidity. */
 export function outlookFor(step: Pick<BranchYear, 'state' | 'solidity'>): Outlook {
   const out: Outlook = {}
-  for (const aspect of BACKGROUND_ASPECTS) out[aspect] = { share: step.solidity, words: likelihoodWords(step.solidity), value: backgroundValue(step.state, aspect) }
+  for (const aspect of BACKGROUND_ASPECTS) out[aspect] = { share: step.solidity, words: "", probability: step.solidity, value: backgroundValue(step.state, aspect) }
   return out
 }
 

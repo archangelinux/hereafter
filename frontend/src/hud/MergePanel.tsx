@@ -1,14 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import type { Api } from '../api'
 import { BasisMark } from '../page/marks'
-import { MEASURES, MeasuresBlock, markTone } from './MeasuresBlock'
+import { MEASURES, MeasuresBlock, WORDS, markTone } from './MeasuresBlock'
 import { theme } from '../theme'
-import type { BranchView, Person, PossibleEvent, Question, ResearchStep, Scenario, Which } from '../types'
+import type { BranchView, Person, PossibleEvent, Question, ResearchStep, Scenario } from '../types'
 
 interface Props {
+  api: Api
   scenario: Scenario
   paths: BranchView[] // every path of this decision, in order
   head: BranchView | null // the path selected and being lived
-  which: Which
   busy: string | null
   error: string | null
   notice: string | null
@@ -16,17 +17,22 @@ interface Props {
   question: Question | null
   onHead: (branchId: string) => void
   onMerge: (confirm: string) => void
-  onEvidence: (ids: string[]) => void
   onCommit: () => void
+  /** the commit box lives here now, not in a panel of its own */
+  committing: boolean
+  onCommitStep: (message: string) => Promise<void>
+  onCancelCommit: () => void
+  /** what is assumed on this path just now, by event key */
+  assumed: string[]
+  onDrop: (key: string) => void
   onUndo: () => void
   onCompare: () => void
-  onWhich: (w: Which) => void
   onInside: () => void
   onAnswer: (q: Question, a: string) => void
   onSkip: (q: Question) => void
   onModel: () => void
-  /** commit one possibility as a step on this path: "assume this happens" */
-  onAssume: (event: PossibleEvent) => void
+  /** commit a set of possibilities: "assume these happen". One commit, however many are ticked. */
+  onPin: (keys: string[]) => void
   step: number | null
   person: Person | null
 }
@@ -35,13 +41,14 @@ const WORD: Record<string, string> = { merged: 'chosen', faded: 'not taken', sta
 
 /** The right-hand panel: the decision, where HEAD is, and the merge that actually makes the choice. */
 export function MergePanel(p: Props) {
+  const [commitText, setCommitText] = useState('')
   const { scenario, paths, head } = p
   const [confirming, setConfirming] = useState(false)
   const [typed, setTyped] = useState('')
   const [more, setMore] = useState(false) // narrow windows: the panel compacts to a bar; this opens the rest
-  const [allEvents, setAllEvents] = useState(false)
   const [why, setWhy] = useState<string | null>(null)
   useEffect(() => (setConfirming(false), setTyped('')), [head?.branch.id, head?.branch.status])
+  // a commit redraws the path; the tray starts empty again on the life that comes back
 
   const decided = paths.find((b) => b.branch.status === 'merged') ?? null
   const canMerge = !!head && head.branch.status === 'open' && !head.branch.forming && head.years.length > 0
@@ -53,8 +60,14 @@ export function MergePanel(p: Props) {
   // most likely first. Until the backend sends probabilities, the agreement share of the last step stands in.
   const last = head?.years[head.years.length - 1]
   const pOf = (e: PossibleEvent) => e.probability ?? last?.outlook[e.key]?.probability ?? last?.outlook[e.key]?.share ?? null
-  const events = [...(head?.branch.model.events ?? [])].sort((a, b) => (pOf(b) ?? -1) - (pOf(a) ?? -1))
+  // Earliest first: these are the things that could happen ON this path, in the order they could
+  // happen. (They were ranked by probability, which made the order look arbitrary.)
+  const events = [...(head?.branch.model.events ?? [])].sort((a, b) => {
+    const at = (e: PossibleEvent) => (e.window?.[0] ?? 0) * 1000 - (pOf(e) ?? 0)
+    return at(a) - at(b)
+  })
   const lastCommit = head?.branch.commits[head.branch.commits.length - 1]
+  const open = head?.branch.status === 'open' // only a path still open can take a pin
 
   return (
     <>
@@ -101,42 +114,74 @@ export function MergePanel(p: Props) {
 
         {head?.branch.measures && <MeasuresBlock measures={head.branch.measures} step={p.step} person={p.person} />}
 
-        {events.length > 0 && (
-          <>
-            <h3>What could happen, most likely first</h3>
-            <ul className="h-could">
-              {events.slice(0, allEvents ? undefined : 5).map((e) => {
-                const pr = pOf(e)
-                const open = why === e.key
-                return (
-                  <li key={e.key}>
-                    <button type="button" className="h-could__row" aria-expanded={open} onClick={() => setWhy(open ? null : e.key)} title="How this number was made">
-                      <BasisMark basis={e.basis} />
-                      <span className="h-could__label">{e.label}</span>
-                      <span className="h-could__pct">{pr === null ? e.words : `${Math.round(pr * 100)}%`}</span>
-                      {pr !== null && <i className="h-could__bar" style={{ width: `${Math.round(pr * 100)}%` }} />}
+        {events.length > 0 && (() => {
+          // One at a time: the next thing that could happen where the ghost stands. The rest are
+          // there if asked for, but the panel is not a list of fifteen things.
+          const next = events.find((e) => !p.assumed.includes(e.key) && (e.probability ?? 0) < 0.999)
+          const mine = events.filter((e) => p.assumed.includes(e.key))
+          return (
+            <>
+              {next && (
+                <div className="h-next">
+                  <p className="h-muted">Could happen here</p>
+                  <p className="h-next__row">
+                    <BasisMark basis={next.basis} />
+                    <span className="h-next__label">{next.label}</span>
+                    <span className="h-next__pct">{pct(next.probability)}</span>
+                  </p>
+                  <p className="h-foot__row">
+                    <button type="button" className="h-link h-next__assume" disabled={!open || p.busy === 'commit'} onClick={() => p.onPin([next.key])}>
+                      {p.busy === 'commit' ? 'redrawing' : 'Assume it'}
                     </button>
-                    {head?.branch.status === 'open' && p.which === 'typical' && <button type="button" className="h-link h-could__commit" onClick={() => p.onAssume(e)} disabled={p.busy === 'commit'} title="Assume this happens: add it to this path as a step. You can undo it.">commit</button>}
-                    {open && <Why event={e} onEvidence={p.onEvidence} />}
-                  </li>
-                )
-              })}
-            </ul>
+                    <button type="button" className="h-link" onClick={() => setWhy(why === next.key ? null : next.key)}>why</button>
+                  </p>
+                  {why === next.key && <Why event={next} api={p.api} />}
+                </div>
+              )}
+              {mine.length > 0 && (
+                <ul className="h-stage">
+                  {mine.map((e) => (
+                    <li key={e.key}>
+                      <button type="button" className="h-stage__row is-on h-stage__pick" onClick={() => p.onDrop(e.key)} title="Take this assumption back">
+                        <span className="h-stage__label">{e.label}</span>
+                        <span className="h-stage__words">assumed</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="h-foot__row"><button type="button" className="h-link" onClick={p.onModel}>How these numbers are made</button></p>
+            </>
+          )
+        })()}
+
+        {head && p.committing && (
+          <form
+            className="h-commit"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const message = commitText.trim()
+              if (message) void p.onCommitStep(message).then(() => setCommitText(''))
+            }}
+          >
+            <label>
+              <span>What you would do here</span>
+              <input className="h-input" autoFocus value={commitText} onChange={(e) => setCommitText(e.target.value)} placeholder="in your own words" />
+            </label>
             <p className="h-foot__row">
-              {events.length > 5 && <button type="button" className="h-link" onClick={() => setAllEvents((v) => !v)}>{allEvents ? 'Fewer' : `${events.length - 5} more`}</button>}
-              <button type="button" className="h-link" onClick={p.onModel}>How these numbers are made</button>
+              <button type="submit" className="h-link" disabled={p.busy === 'commit' || !commitText.trim()}>{p.busy === 'commit' ? 'redrawing what follows' : 'commit'}</button>
+              <button type="button" className="h-link" onClick={p.onCancelCommit}>never mind</button>
             </p>
-          </>
+          </form>
         )}
 
         {head && (
           <ul className="h-actions">
-            {head.branch.status === 'open' && p.which === 'typical' && <li><button type="button" onClick={p.onCommit} title="Add one step to this path. You can undo it.">Commit <kbd>K</kbd></button></li>}
-            {head.branch.status === 'open' && p.which === 'typical' && <li><button type="button" onClick={p.onInside} title="Split this path here into two or more paths.">Branch <kbd>B</kbd></button></li>}
+            {head.branch.status === 'open' && <li><button type="button" onClick={p.onCommit} title="Say what you would do at this moment; what follows is redrawn from it. You can undo it.">Commit <kbd>K</kbd></button></li>}
+            {head.branch.status === 'open' && <li><button type="button" onClick={p.onInside} title="Split this path here into two or more paths.">Branch <kbd>B</kbd></button></li>}
             {lastCommit && <li><button type="button" onClick={p.onUndo} disabled={p.busy === 'undo'} title="Remove your last commit.">Undo “{lastCommit.message}” <kbd>U</kbd></button></li>}
             {paths.length > 1 && <li><button type="button" onClick={() => p.onHead(paths[(paths.findIndex((x) => x.branch.id === head.branch.id) + 1) % paths.length].branch.id)} title="Move to another path.">Switch <kbd>S</kbd></button></li>}
             {paths.length > 1 && <li><button type="button" onClick={p.onCompare} title="Put the paths side by side.">Compare <kbd>C</kbd></button></li>}
-            <li><button type="button" onClick={() => p.onWhich(p.which === 'typical' ? 'rare' : 'typical')} disabled={p.busy === 'rare'} title="The least likely version of this path. Nothing in it is impossible.">{p.which === 'typical' ? 'Rarest life' : 'Typical life'} <kbd>R</kbd></button></li>
           </ul>
         )}
       </div>
@@ -173,11 +218,11 @@ export function MergePanel(p: Props) {
 }
 
 
-const pct = (x: number) => `${Math.round(x * 100)}%`
+const pct = (x: number | undefined) => (typeof x === 'number' ? `${Math.round(x * 100)}%` : '')
 const BASE_WORDS = { sourced: 'Published rate', personal: 'From your own history', estimated: 'An estimate', background: 'Life-course tables' } as const
 
 /** How one number was made: base rate, what your personality changed, what it depends on, and the count. */
-function Why({ event, onEvidence }: { event: PossibleEvent; onEvidence: (ids: string[]) => void }) {
+function Why({ event, api }: { event: PossibleEvent; api: Api }) {
   const b = event.breakdown
   if (!b) return <div className="h-why"><p>{event.basis === 'estimated' ? 'An estimate: no published figure was found.' : event.basis === 'sourced' ? 'From a published figure.' : 'From the life-course tables.'} The full breakdown is not available for this path yet.</p></div>
   return (
@@ -185,7 +230,7 @@ function Why({ event, onEvidence }: { event: PossibleEvent; onEvidence: (ids: st
       <p>
         <b>{BASE_WORDS[b.base.kind]}: {b.base.range ? `${pct(b.base.range[0])}–${pct(b.base.range[1])}` : pct(b.base.value)}</b>
         {b.base.reference_class ? ` · ${b.base.reference_class}` : ''}
-        {b.base.evidence_id && <> · <button type="button" className="h-link" onClick={() => onEvidence([b.base.evidence_id!])}>source</button></>}
+        {b.base.evidence_id && <> · <button type="button" className="h-link" onClick={() => void api.evidence({ ids: [b.base.evidence_id!] }).then(([ev]) => ev?.source_url && open(ev.source_url, '_blank', 'noopener'))}>source</button></>}
       </p>
       {b.base.note && <p className="h-muted">{b.base.note}</p>}
       {b.personality.map((t) => (
@@ -201,7 +246,7 @@ function Why({ event, onEvidence }: { event: PossibleEvent; onEvidence: (ids: st
           {MEASURES.filter((m) => event.effects![m]).map((m) => {
             const v = event.effects![m]
             const marks = (v > 0 ? '+' : '−').repeat(Math.abs(v))
-            return <span key={m} className={`h-chip h-tiny--${markTone(marks)}`}>{m} {marks}</span>
+            return <span key={m} className={`h-chip h-tiny--${markTone(marks)}`}>{WORDS[m]} {marks}</span>
           })}
           <span className="h-muted">{event.effects_basis === 'sourced' ? 'from a published figure' : 'a judgement'}</span>
         </p>

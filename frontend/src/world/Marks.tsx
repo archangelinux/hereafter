@@ -42,7 +42,7 @@ export function Mark({ node, at, laneId, width, sink = 0, walked, speaking, pale
   const ghost = node.basis === 'estimated'
   const quiet = node.basis === 'background' && !commit
   // set exactly into the top surface, on the centreline, all of one size for their band
-  const r = commit ? width * 0.6 : Math.max(0.055, Math.min(0.13, width * 0.14))
+  const r = commit ? width * 0.42 : 0.0001 // a dot is a commit; nothing else is a dot
 
   useFrame((state, dt) => {
     const w = walker.current

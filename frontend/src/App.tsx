@@ -1,20 +1,17 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { clearSession, getApi, loadSession, saveSession, setToken, type Api } from './api'
 import { Decisions } from './hud/Decisions'
-import { Satchel } from './hud/Hud'
 import { MergePanel } from './hud/MergePanel'
 import type { Mode } from './hud/ModeSwitch'
 import { NewDecision } from './hud/NewDecision'
-import { Narration } from './hud/Narration'
+import { useSteps } from './hud/useSteps'
 import { useRails } from './hud/useRails'
 import { useZones } from './hud/useZones'
 import { withGuides } from './derive'
 import { belongsOnLine, isByYear, stepDate } from './format'
-import { accentOf, Line } from './line/Line'
-import { EvidenceDrawer } from './page/EvidenceDrawer'
-import { Page } from './page/Page'
+import { Line } from './line/Line'
 import { theme } from './theme'
-import type { BranchView, BranchYear, IngestResult, Insets, ResearchStep, TicketPatch, LifeEvent, LivesResponse, Question, Scenario, Session, TrunkResponse, Which, Zone } from './types'
+import type { BranchView, IngestResult, Insets, ResearchStep, TicketPatch, LifeEvent, Question, Scenario, Session, TrunkResponse, Zone } from './types'
 import { Compare } from './views/Compare'
 import { InventoryView } from './views/InventoryView'
 import { LogView } from './views/LogView'
@@ -32,7 +29,6 @@ interface ViewProps {
   scenarios: Scenario[]
   activeId: string | null
   hereStep: number | null
-  rare: BranchYear[] | null
   onSwitch: (branchId: string) => void
   onSeek: (branchId: string, step: number) => void
   onOpenLog: () => void
@@ -96,16 +92,11 @@ export default function App() {
   const [justMerged, setJustMerged] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<string | null>(params.get('branch'))
-  const [which, setWhich] = useState<Which>('typical')
-  const [rare, setRare] = useState<LivesResponse | null>(null)
   const [hereStep, setHereStep] = useState<number | null>(null)
   const [seek, setSeek] = useState<{ step: number; nonce: number } | null>(null)
-  const [drawer, setDrawer] = useState<{ ids: string[]; step: BranchYear | null; collected?: boolean } | null>(null)
   const [sheet, setSheet] = useState<Sheet>(params.get('sheet') === 'decision' ? null : ((params.get('sheet') as Sheet) ?? null))
   const [deciding, setDeciding] = useState(params.get('sheet') === 'decision')
   const [research, setResearch] = useState<ResearchStep | null>(null)
-  const [reading, setReading] = useState(params.has('read'))
-  const [satchel, setSatchel] = useState(false)
   const [committing, setCommitting] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -113,7 +104,6 @@ export default function App() {
   const [assuming, setAssuming] = useState<BranchView | null>(null)
   const [firmed, setFirmed] = useState(false)
   const [skipped, setSkipped] = useState<string[]>([])
-  const [collected, setCollected] = useState<string[]>(() => JSON.parse(localStorage.getItem('hereafter.codex') ?? '[]') as string[])
   const [mode, setMode] = useState<Mode>(() => (params.get('view') as Mode) ?? (localStorage.getItem('hereafter.mode') as Mode) ?? 'island')
   const [worldFailed, setWorldFailed] = useState(false)
   const [fading, setFading] = useState(false)
@@ -171,7 +161,6 @@ export default function App() {
   const scenario = scenarios.find((s) => s.id === active?.branch.scenario_id) ?? null
   const siblings = useMemo(() => (scenario ? scenario.branch_ids.flatMap((id) => views.filter((v) => v.branch.id === id)) : active ? [active] : []), [scenario, views, active])
   const shown = scenario ?? (focusedId === undefined ? newest : (scenarios.find((x) => x.id === focusedId) ?? null))
-  const goals = useMemo(() => (trunk?.events ?? []).filter((e) => e.event_type === 'goal'), [trunk])
 
   const did = useCallback((what: string) => {
     setDone((d) => {
@@ -186,10 +175,7 @@ export default function App() {
     setAdvances(0)
     setJustMerged(false)
     if (id) did('pick')
-    setWhich('typical')
-    setRare(null)
     setHereStep(null)
-    setDrawer(null)
     setError(null)
     setFirmed(false)
     setCommitting(false)
@@ -219,35 +205,12 @@ export default function App() {
     if (moving) walkTimer.current = setTimeout(() => setWalking(false), 2600)
   }, [])
 
-  const collect = useCallback((ids: string[]) => {
-    setCollected((all) => {
-      const next = [...new Set([...all, ...ids])]
-      if (next.length === all.length) return all
-      localStorage.setItem('hereafter.codex', JSON.stringify(next))
-      return next
-    })
-  }, [])
 
   /** an example can be walked and read, never changed */
   const real = (fn: () => void) => fn
 
   const replaceView = (v: BranchView) => setViews((all) => all.map((x) => (x.branch.id === v.branch.id ? v : x)))
   const fail = (err: unknown, fallback: string) => setError(err instanceof Error ? err.message : fallback)
-
-  const jump = useCallback(async (w: Which) => {
-    if (!api || !active) return
-    if (w === 'typical') return (setWhich('typical'), setRare(null))
-    setBusy('rare')
-    setError(null)
-    try {
-      setRare(await api.lives(active.branch.id, 'rare'))
-      setWhich('rare')
-    } catch (err) {
-      fail(err, 'No rarer life could be found here.')
-    } finally {
-      setBusy(null)
-    }
-  }, [api, active])
 
   const createDecision = async (decision: string, paths: string[]) => {
     if (!api || !session) return
@@ -280,12 +243,12 @@ export default function App() {
     }
   }
 
-  const commit = async (at: string, message: string, eventKey?: string) => {
+  const commit = async (at: string, message: string, eventKeys?: string[]) => {
     if (!api || !active) return
     setBusy('commit')
     setError(null)
     try {
-      replaceView(await api.commit(active.branch.id, at, message, eventKey))
+      replaceView(await api.commit(active.branch.id, at, message, eventKeys))
       did('commit')
       setCommitting(false)
     } catch (err) {
@@ -295,12 +258,13 @@ export default function App() {
     }
   }
 
-  const undo = useCallback(async () => {
+  /** take back one assumption (any of them, in any order), or the last one made */
+  const undo = useCallback(async (commitId?: string) => {
     if (!api || !active || !active.branch.commits.length || active.branch.example) return
     setBusy('undo')
     setError(null)
     try {
-      replaceView(await api.undo(active.branch.id))
+      replaceView(await api.undo(active.branch.id, commitId))
     } catch (err) {
       fail(err, 'There was nothing to undo.')
     } finally {
@@ -337,18 +301,6 @@ export default function App() {
       fail(err, 'The merge did not go through. Nothing was changed.')
     } finally {
       setBusy(null)
-    }
-  }
-
-  const pick = async (eventId: string) => {
-    if (!api || !active) return
-    setError(null)
-    try {
-      await api.carry(active.branch.id, eventId)
-      await refresh()
-      setSatchel(true)
-    } catch (err) {
-      fail(err, 'That moment could not be picked.')
     }
   }
 
@@ -396,9 +348,6 @@ export default function App() {
       const k = e.key.toLowerCase()
       if (k === 'escape') {
         if (deciding) setDeciding(false)
-        else if (drawer) setDrawer(null)
-        else if (satchel) setSatchel(false)
-        else if (reading) setReading(false)
         else if (committing) setCommitting(false)
         else if (!sheet && active) (setFocusedId(active.branch.scenario_id), switchTo(null))
         else if (!sheet && shown) setFocusedId(null)
@@ -411,9 +360,8 @@ export default function App() {
         const i = siblings.findIndex((s) => s.branch.id === active.branch.id)
         switchTo(siblings[(i + 1) % siblings.length].branch.id)
       } else if (k === 'c' && siblings.length > 1) setSheet('compare')
-      else if (k === 'k' && active.branch.status === 'open' && which === 'typical') (e.preventDefault(), real(() => setCommitting(true))())
+      else if (k === 'k' && active.branch.status === 'open') (e.preventDefault(), real(() => setCommitting(true))())
       else if (k === 'u') void undo()
-      else if (k === 'r') void jump(which === 'typical' ? 'rare' : 'typical')
       else if (k === 'b' && active.branch.status === 'open') real(() => (setAssuming(active), setDeciding(true)))()
     }
     // N opens the decision box on key-up, so the letter itself never lands in the field
@@ -423,18 +371,49 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     window.addEventListener('keyup', onUp)
     return () => (window.removeEventListener('keydown', onKey), window.removeEventListener('keyup', onUp))
-  }, [active, siblings, sheet, drawer, satchel, reading, committing, deciding, which, switchTo, toggleMode, undo, jump, shown])
+  }, [active, siblings, sheet, committing, deciding, switchTo, toggleMode, undo, shown])
+
+  // Living a path is stepping through it in the world itself — there is no panel of prose.
+  const steps = useSteps({
+    view: active,
+    seek,
+    walking: view === 'island' && walking,
+    followsFigure: view === 'island',
+    onStep: setHereStep,
+    onAdvance: () => (setAdvances((n) => n + 1), did('walk')),
+  })
 
   const drawn = useMemo(() => (trunk ? withGuides(views, scenarios, trunk.now, trunk.state) : views), [views, scenarios, trunk])
-  // Never everything at once. Stale paths, picked moments and other decisions' paths are there when the person goes looking.
+  // The past is continuous: once a decision is settled it keeps its paths for good — the one chosen
+  // and the ones dropped — so the tree only ever grows. Only a decision still open, and not the one
+  // being considered, collapses to its circle on main; a decision made INSIDE a path needs that path
+  // drawn to hang off, so the chain it was made in stays open too.
+  const open = useMemo(() => {
+    const byBranch = new Map(views.map((v) => [v.branch.id, v.branch.scenario_id]))
+    const ids = new Set<string>()
+    for (const s of scenarios) {
+      const branches = s.branch_ids.flatMap((id) => views.filter((v) => v.branch.id === id))
+      if (branches.length > 0 && !branches.some((b) => b.branch.status === 'open')) ids.add(s.id)
+    }
+    const chain = new Set<string>() // the decision being considered, and the paths it was made inside
+    let at = shown ?? null
+    while (at && !chain.has(at.id)) {
+      chain.add(at.id)
+      ids.add(at.id)
+      const parent = at.assuming_branch_id ? byBranch.get(at.assuming_branch_id) : null
+      at = parent ? (scenarios.find((x) => x.id === parent) ?? null) : null
+    }
+    return ids
+  }, [shown, scenarios, views])
+  // Every decision's paths go to the scene — the ones that are only a circle need theirs to know
+  // they exist at all — and the layout draws lanes for the open ones alone.
+  // every path ever drawn stays in the scene, closed ones included: they are drawn back as ruins, not removed
   const sceneViews = useMemo(
-    () => drawn
-      .filter((v) => v.branch.scenario_id === shown?.id && (v.branch.status !== 'stale' || v.branch.id === activeId))
-      .map((v) => ({ ...v, years: v.years.map((y) => ({ ...y, label: y.label === '' ? '' : stepDate(y.at, isByYear(v.years)) })) })),
-    [drawn, shown, activeId],
+    () => drawn.map((v) => ({ ...v, years: v.years.map((y) => ({ ...y, label: y.label === '' ? '' : stepDate(y.at, isByYear(v.years)) })) })),
+    [drawn],
   )
-  const sceneScenarios = useMemo(() => scenarios.map((x) => ({ ...x, collapsed: x.id !== shown?.id })), [scenarios, shown])
-  const sceneEvents = useMemo(() => (trunk?.events ?? []).filter((e) => (satchel || e.event_type !== 'goal') && (e.branch_id !== 'main' || belongsOnLine(e))), [trunk, satchel])
+  const sceneScenarios = useMemo(() => scenarios.map((x) => ({ ...x, collapsed: !open.has(x.id) })), [scenarios, open])
+  const sceneEvents = useMemo(() => (trunk?.events ?? []).filter((e) => e.event_type !== 'goal' && (e.branch_id !== 'main' || belongsOnLine(e))), [trunk])
 
   // exactly one plain next-step line, gone once the person has done that thing twice
   const hint = justMerged ? 'Recorded on main. The other paths are closed.'
@@ -442,16 +421,11 @@ export default function App() {
     : !shown ? ((done.pick ?? 0) < 2 ? 'Click a decision on main to open it' : null)
     : !active ? ((done.pick ?? 0) < 2 ? 'Pick a path to live it' : null)
     : advances < 3 ? ((done.walk ?? 0) < 6 ? 'Space to live it forward' : null)
-    : active.branch.status === 'open' && (done.commit ?? 0) + (done.add ?? 0) < 2 && advances < 7 ? 'Commit adds a step here. Branch splits the path. Both can be undone — only Merge is permanent.'
+    : active.branch.status === 'open' && (done.commit ?? 0) + (done.add ?? 0) < 2 && advances < 7 ? 'Commit pins what you would have happen and redraws what follows. Branch splits the path. Both can be undone — only Merge is permanent.'
     : active.branch.status === 'open' && (done.merge ?? 0) < 2 ? 'Merge makes this choice real. Or pick another path.' : null
 
   const rails = useRails()
-  const { zones, free } = useZones([rails.key, hint, deciding, shown?.id, !!active, reading, !!drawer, satchel, view, mapOpen, asking0(scenario, active, skipped), scenarios.length, !!trunk])
-  const onArrive = useCallback((eventId: string) => {
-    const e = views.flatMap((v) => v.years).flatMap((y) => y.events).find((x) => x.id === eventId)
-    if (typeof e?.payload.evidence_id === 'string') collect([e.payload.evidence_id])
-  }, [views, collect])
-
+  const { zones, free } = useZones([rails.key, hint, deciding, shown?.id, !!active, view, mapOpen, asking0(scenario, active, skipped), scenarios.length, !!trunk])
   const watch = active && !active.branch.example && (active.branch.forming || active.years.length === 0 || active.branch.research === 'pending' || active.branch.research === 'running') ? active.branch.id : null
   useEffect(() => {
     setResearch(null)
@@ -470,7 +444,6 @@ export default function App() {
 
   const firstRun = !session
   const showOffering = firstRun || sheet === 'offering' || ingested !== null
-  const accent = active ? accentOf(active, scenarios) : theme.color.coralDeep
   const asking = active?.branch.status === 'open' ? (scenario?.questions ?? []).filter((q) => !q.answer && !skipped.includes(q.id) && (q.applies_to.length === 0 || q.applies_to.includes(active.branch.option_id ?? ''))) : []
 
   const viewProps: ViewProps | null = trunk && {
@@ -480,7 +453,6 @@ export default function App() {
     scenarios: sceneScenarios,
     activeId: active?.branch.id ?? null,
     hereStep,
-    rare: which === 'rare' && rare ? rare.years : null,
     onSwitch: switchTo,
     onSeek: (id, step) => (id !== active?.branch.id && switchTo(id), setSeek({ step, nonce: Date.now() })),
     onOpenLog: () => setSheet('log'),
@@ -494,7 +466,7 @@ export default function App() {
           <div className={`stage__layer ${view === 'island' ? 'is-on' : ''}`}>
             <Boundary onFail={() => setWorldFailed(true)}>
               <Suspense fallback={null}>
-                <World {...viewProps} safeInsets={free} onArrive={onArrive} onWalking={onWalking} onFocusScenario={focusOn} />
+                <World {...viewProps} safeInsets={free} onWalking={onWalking} onFocusScenario={focusOn} />
               </Suspense>
             </Boundary>
           </div>
@@ -523,10 +495,8 @@ export default function App() {
           <Decisions
             scenarios={scenarios}
             views={drawn}
-            activeId={active?.branch.id ?? null}
             focusId={shown?.id ?? null}
-            onFocus={(id) => focusOn(id)}
-            onOpen={(id) => (switchTo(id), setRail(false))}
+            onFocus={(id) => (focusOn(id), setRail(false))}
             onEdit={(sc, patch) => void editTicket(sc, patch)}
             onNew={() => (setAssuming(null), setDeciding(true), setRail(false))}
           />
@@ -563,8 +533,6 @@ export default function App() {
             )}
             {(worldFailed || !hasWebGL || !World) && <p className="h-muted">3D view unavailable — showing the line.</p>}
             <nav className="h-foot__row" aria-label="more">
-              <button type="button" className="h-link" onClick={() => setDrawer({ ids: collected, step: null, collected: true })}>Evidence</button>
-              <button type="button" className="h-link" onClick={() => setSatchel((v) => !v)}>Picked</button>
               <button type="button" className="h-link" onClick={() => setSheet('log')}>Log</button>
               <button type="button" className="h-link" onClick={() => setSheet('inventory')}>Your data</button>
             </nav>
@@ -572,45 +540,32 @@ export default function App() {
         </aside>
 
         <div className="hud__bottom">
-          {hint && !deciding && !reading && <p className="h-hint" key={hint}>{hint}</p>}
+          {hint && !deciding && <p className="h-hint" key={hint}>{hint}</p>}
           {!deciding && scenarios.length === 0 && session && session.person_id !== 'demo' && <a className="h-link h-hint__example" href="?person=demo">See an example</a>}
           {deciding && session ? (
             <NewDecision inside={assuming ? `${assuming.branch.label}, ${stepDate((assuming.years[hereStep ?? 0] ?? assuming.years[0])?.at ?? trunk?.now ?? '')}` : null} busy={busy === 'decide'} error={error} onCreate={(d, ps) => void createDecision(d, ps)} onClose={() => setDeciding(false)} />
-          ) : active && !reading ? (
-            <Narration
-              api={api}
-              view={active}
-              which={which}
-              rare={rare}
-              seek={seek}
-              committing={committing}
-              walking={view === 'island' && walking}
-              followsFigure={view === 'island'}
-              busy={busy}
-              onStep={setHereStep}
-              onEvidence={(ids, step) => setDrawer({ ids, step })}
-              onCollect={collect}
-              onCommit={commit}
-              onCancelCommit={() => setCommitting(false)}
-              onReadAll={() => setReading(true)}
-              onAdvance={() => (setAdvances((n) => n + 1), did('walk'))}
-            />
           ) : null}
+
         </div>
 
         <div className={`hud__right ${rails.collapsed('right') ? 'is-collapsed' : ''}`}>
           {!rails.narrow && !rails.collapsed('right') && shown && <div {...rails.grip('right')} />}
-          {shown && !reading && !rails.narrow && (
+          {shown && !rails.narrow && (
             <button type="button" className={rails.collapsed('right') ? 'h-tab h-tab--right' : 'h-fold h-fold--right'} onClick={() => rails.toggle('right')} title={rails.collapsed('right') ? 'Open this panel' : 'Fold this panel away'}>
               {rails.collapsed('right') ? `‹ ${shown.situation}` : '›'}
             </button>
           )}
-          {shown && !reading && (
+          {shown && (
             <MergePanel
+              api={api}
+              committing={committing}
+              onCommitStep={(message) => { const at = steps.at?.at; return at ? commit(at, message) : Promise.resolve() }}
+              onCancelCommit={() => setCommitting(false)}
+              assumed={(active?.branch.commits ?? []).map((c) => c.event_key ?? '').filter(Boolean)}
+              onDrop={(key) => void undo((active?.branch.commits ?? []).find((c) => c.event_key === key)?.id)}
               scenario={shown}
               paths={shown.branch_ids.flatMap((id) => drawn.filter((v) => v.branch.id === id))}
               head={active && active.branch.scenario_id === shown.id ? active : null}
-              which={which}
               busy={busy}
               error={error}
               notice={firmed ? 'Added to main. The paths it speaks to have firmed up.' : notice}
@@ -618,48 +573,20 @@ export default function App() {
               question={asking[0] ?? null}
               onHead={switchTo}
               onMerge={(confirm) => void merge(confirm)}
-              onEvidence={(ids) => setDrawer({ ids, step: null })}
               onCommit={real(() => setCommitting(true))}
               onUndo={() => void undo()}
               onCompare={() => setSheet('compare')}
-              onWhich={(w) => void jump(w)}
               onInside={real(() => (setAssuming(active), setDeciding(true)))}
               onAnswer={(q, a2) => void answer(q, a2)}
               onSkip={(q) => setSkipped((all) => [...all, q.id])}
               onModel={() => setSheet('model')}
-              onAssume={(ev) => { const at = (active?.years[hereStep ?? 0] ?? active?.years[0])?.at; if (at) void commit(at, `${ev.label} happens`, ev.key) }}
+              onPin={(keys) => { const at = (active?.years[hereStep ?? 0] ?? active?.years[0])?.at; if (at) void commit(at, '', keys) }}
               step={hereStep}
               person={trunk?.person ?? null}
             />
           )}
         </div>
       </div>
-
-      {satchel && <Satchel goals={goals} views={views} onClose={() => setSatchel(false)} />}
-
-      {reading && active && (
-        <div className="reader">
-          <Page
-            api={api}
-            view={active}
-            scenario={scenario}
-            accent={accent}
-            which={which}
-            rare={rare}
-            seek={seek}
-            busy={busy}
-            error={error}
-            onHere={setHereStep}
-            onEvidence={(ids, step) => setDrawer({ ids, step })}
-            onCommit={commit}
-            onPick={pick}
-            onClose={() => setReading(false)}
-          />
-        </div>
-      )}
-      {drawer && (active || drawer.collected) && (
-        <EvidenceDrawer api={api} branch={active?.branch ?? views[0]?.branch} ids={drawer.ids} step={drawer.step} collected={drawer.collected} onClose={() => setDrawer(null)} />
-      )}
 
       {sheet === 'compare' && active && <Compare api={api} views={[active, ...siblings.filter((s) => s.branch.id !== active.branch.id)]} scenario={scenario} onSwitch={(id) => (switchTo(id), setSheet(null))} onClose={() => setSheet(null)} />}
       {sheet === 'model' && <ModelSheet api={api} onClose={() => setSheet(null)} />}

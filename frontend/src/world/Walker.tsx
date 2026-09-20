@@ -38,6 +38,8 @@ const disc = new THREE.PlaneGeometry(0.46, 0.36).rotateX(-Math.PI / 2)
 const ringMaterial = new THREE.MeshBasicMaterial({ color: '#E2917A', toneMapped: false })
 
 interface Props {
+  /** the ghost is drawn pale: the real figure never leaves now */
+  pale?: boolean
   layout: WorldLayout
   target: { lane: LaneSpec; d: number; steps: number } | null // where the reader is (and how many steps away that was); null means now
   onRest?: (laneId: string | null, d: number) => void // it has come to rest exactly on its target
@@ -50,7 +52,8 @@ interface Props {
  * WALKS there along the ribbon: back to the fork if it has to change branch, then out along the
  * new one. A procedural walk: a small bob, feet that step, a lean into the way it is going.
  */
-export function Walker({ layout, target, state, still, onRest }: Props) {
+export function Walker({ layout, target, state, still, onRest, pale = false }: Props) {
+  const skin = softMaterial(pale ? 0.42 : 1)
   const root = useRef<THREE.Group>(null)
   const body = useRef<THREE.Group>(null)
   const head = useRef<THREE.Mesh>(null)
@@ -187,6 +190,10 @@ export function Walker({ layout, target, state, still, onRest }: Props) {
     // forward and back in opposite phase and lift a little only while swinging through. Nothing rotates.
     const lift = 0.028
     const reach = 0.06
+    if (pale) {
+      // the ghost floats: it hovers a little off the path and its hem drifts
+      g.position.y += 0.22 + Math.sin(t * 0.9) * 0.05
+    }
     if (footL.current) {
       footL.current.position.set(-0.06, 0.04 + gait * Math.max(0, Math.sin(ph)) * lift, -gait * Math.cos(ph) * reach)
       footL.current.rotation.set(0, 0, 0)
@@ -208,17 +215,17 @@ export function Walker({ layout, target, state, still, onRest }: Props) {
   })
 
   return (
-    <group ref={root} scale={1.45}>
+    <group ref={root} scale={2.05}>
       {/* the shadow and the ring share the figure's own anchor: its feet are the origin of this group */}
       <mesh geometry={disc} material={contactMaterial()} position={[0, 0.012, 0]} renderOrder={5} />
       <mesh ref={ring} geometry={figureRing()} material={ringMaterial} position={[0, 0.02, 0]} renderOrder={6} visible={false} />
-      <mesh ref={footL} geometry={figureFoot()} material={softMaterial(1)} />
-      <mesh ref={footR} geometry={figureFoot()} material={softMaterial(1)} />
+      <mesh ref={footL} geometry={figureFoot()} material={skin} />
+      <mesh ref={footR} geometry={figureFoot()} material={skin} />
       <group ref={body}>
-        <mesh geometry={figureBody()} material={softMaterial(1)} />
-        <mesh ref={armL} geometry={figureArm()} material={softMaterial(1)} position={[-0.105, 0.4, 0]} rotation={[0, 0, -0.32]} />
-        <mesh ref={armR} geometry={figureArm()} material={softMaterial(1)} position={[0.105, 0.4, 0]} rotation={[0, 0, 0.32]} />
-        <mesh ref={head} geometry={figureHead()} material={softMaterial(1)} position={[0, 0.585, 0]} />
+        <mesh geometry={figureBody()} material={skin} />
+        <mesh ref={armL} geometry={figureArm()} material={skin} position={[-0.105, 0.4, 0]} rotation={[0, 0, -0.32]} />
+        <mesh ref={armR} geometry={figureArm()} material={skin} position={[0.105, 0.4, 0]} rotation={[0, 0, 0.32]} />
+        <mesh ref={head} geometry={figureHead()} material={skin} position={[0, 0.585, 0]} />
       </group>
     </group>
   )

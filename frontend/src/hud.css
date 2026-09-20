@@ -64,8 +64,8 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .h-brand { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 16px; flex: none; }
 .h-brand h1 { margin: 0; font-family: var(--font-display); font-style: italic; font-weight: 500; font-size: 20px; line-height: 26px; }
 .h-brand p { margin: 0; font-size: 12px; line-height: 16px; color: var(--color-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.h-decisions__list { list-style: none; margin: 0 -8px; padding: 0 8px; display: grid; gap: 12px; overflow-y: auto; min-height: 0; scrollbar-width: thin; }
-.h-decision { display: grid; gap: 4px; min-width: 0; }
+.h-decisions__list { list-style: none; margin: 0 -8px; padding: 0 8px; display: grid; gap: 6px; overflow-y: auto; min-height: 0; scrollbar-width: thin; }
+.h-decision { display: grid; gap: 4px; min-width: 0; margin: 0 -8px; padding: 4px 8px; border-radius: 8px; }
 .h-decision__row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .h-decision__title { appearance: none; flex: 1; min-width: 0; background: none; border: 0; padding: 0; font: inherit; font-weight: 500; color: var(--color-text); text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .h-decision__title:hover { text-decoration: underline; text-decoration-color: var(--color-coral-deep); text-underline-offset: 3px; }
@@ -75,7 +75,7 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .h-paths, .h-heads { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .h-paths li, .h-heads li, .h-decisions__list > li { min-width: 0; }
 .h-decisions__list { grid-template-columns: minmax(0, 1fr); }
-.h-paths { padding-left: 8px; }
+.h-paths { padding-left: 8px; gap: 4px; }
 .h-decisions__foot { margin: 0; display: flex; justify-content: space-between; flex: none; padding-top: 8px; border-top: 1px solid var(--color-hairline); }
 .h-fill { flex: 1 1 0; pointer-events: none !important; }
 .h-map { flex: none; display: grid; gap: 4px; }
@@ -107,14 +107,27 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .h-ask__choices { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 4px !important; }
 
 /* what could happen: most likely first, a percentage each, a thin bar, and how each number was made */
-.h-could { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.h-could__row { appearance: none; position: relative; width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) 40px; gap: 8px; align-items: center; min-height: 28px; padding: 4px 8px; border: 0; border-radius: 8px; background: none; font: inherit; color: var(--color-text); text-align: left; cursor: pointer; overflow: hidden; }
-.h-could__row:hover, .h-could__row[aria-expanded='true'] { background: var(--color-veil); }
-.h-could__bar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--color-coral); border-radius: 2px; }
-.h-could__label { min-width: 0; font-size: 12px; line-height: 16px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.h-could__pct { font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; }
-.h-could .basis { width: 16px; height: 12px; stroke: var(--color-text); }
-.h-why { margin: 0 0 4px; padding: 8px 10px; border-left: 2px solid var(--color-hairline); display: grid; gap: 4px; font-size: 12px; line-height: 16px; }
+/* the tray: what you could have happen, ticked and committed together */
+.h-stage { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.h-stage li { position: relative; }
+.h-stage__lede { margin: 0 0 6px; font-size: 12px; line-height: 16px; }
+.h-stage__row { display: grid; grid-template-columns: auto 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 28px; padding: 4px 34px 4px 8px; border-radius: 8px; cursor: pointer; }
+.h-stage__row:hover { background: var(--color-veil); }
+.h-stage__row.is-on { background: var(--color-veil); }
+.h-stage__row.is-with { color: var(--color-text-2); cursor: default; }
+.h-stage__row.is-read { grid-template-columns: 16px minmax(0, 1fr) auto; cursor: default; } /* a closed path: nothing to tick */
+.h-stage__row input { width: 13px; height: 13px; margin: 0; accent-color: var(--color-coral-deep); cursor: pointer; }
+.h-stage__label { min-width: 0; font-size: 12px; line-height: 16px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.h-stage__words { font-size: 12px; line-height: 16px; color: var(--color-text-2); white-space: nowrap; }
+.h-stage .basis { width: 16px; height: 12px; stroke: var(--color-text); }
+.h-stage__why { position: absolute; right: 6px; top: 6px; opacity: 0; background: var(--color-paper); padding: 0 4px; border-radius: 4px; }
+.h-stage li:hover .h-stage__why, .h-stage__why:focus-visible, .h-stage__why[aria-expanded='true'] { opacity: 1; }
+.h-stage__foot { margin: 8px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.h-stage__commit { appearance: none; border: 1px solid var(--color-hairline); border-radius: 8px; background: var(--color-paper); font: inherit; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--color-text); padding: 5px 10px; cursor: pointer; }
+.h-stage__commit:hover:not(:disabled) { background: var(--color-veil); }
+.h-stage__commit:disabled { opacity: 0.55; cursor: default; }
+.h-stage__brings { flex-basis: 100%; font-size: 12px; line-height: 16px; color: var(--color-text-2); }
+.h-why { margin: 0 0 4px; padding: 8px 10px; display: grid; gap: 4px; font-size: 12px; line-height: 16px; }
 .h-why p { margin: 0; }
 .h-why b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .h-why a { color: inherit; }
@@ -234,6 +247,7 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .line__recentre { right: auto; top: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; line-height: 16px; cursor: pointer; color: var(--color-text-2); }
 .line__legend { position: absolute; z-index: 2; display: grid; gap: 4px; padding: 10px 12px; font-size: 12px; line-height: 16px; color: var(--color-text-2); background: var(--color-paper); border-radius: 12px; box-shadow: 0 1px 2px rgba(92, 83, 71, 0.08), 0 12px 32px -16px rgba(92, 83, 71, 0.35); pointer-events: none; }
 .line__legend span { display: flex; align-items: center; gap: 8px; }
+.line__legend hr { width: 100%; margin: 2px 0; border: 0; border-top: 1px solid var(--color-hairline); }
 .line__message { font-size: 13px; }
 .lane__title { font-family: var(--font-body); font-weight: 600; font-size: 14px; }
 .label--card .line__message { font-size: 14px; }
@@ -263,9 +277,11 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .label__paper { stroke: none; filter: drop-shadow(0 1px 1px rgba(92, 83, 71, 0.12)) drop-shadow(0 8px 12px rgba(92, 83, 71, 0.22)); }
 .h-why { border-left: 0; background: var(--color-veil); border-radius: 8px; }
 
-/* one decision in focus; one plain next-step line */
+/* one decision in focus: the one the right-hand panel is showing */
+.h-decision.is-focused { background: var(--color-veil); }
 .h-decision.is-focused > .h-decision__row .h-decision__title { font-weight: 600; }
 .h-decision:not(.is-focused) .h-decision__title { font-weight: 400; }
+.h-decision:not(.is-focused):hover { background: rgba(92, 83, 71, 0.04); }
 .h-hint { justify-self: center; width: auto !important; margin: 0 0 8px; padding: 6px 14px; border-radius: 999px; background: var(--color-text); color: var(--color-paper); font-size: 14px; line-height: 20px; font-weight: 500; box-shadow: 0 1px 2px rgba(92, 83, 71, 0.08), 0 12px 32px -16px rgba(92, 83, 71, 0.35); animation: drift-in var(--motion-medium) var(--motion-ease) both; pointer-events: none !important; }
 .h-hint__example { justify-self: center; width: auto !important; margin-bottom: 8px; background: var(--color-paper); border-radius: 8px; padding: 2px 8px; text-decoration: none; }
 .line__fork--collapsed { cursor: pointer; }
@@ -296,7 +312,6 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .h-tiny { flex: none; display: grid; grid-template-columns: repeat(4, 16px); width: 64px; font-size: 12px; line-height: 16px; overflow: visible; }
 .h-tiny i { font-style: normal; font-weight: 600; text-align: center; white-space: nowrap; }
 .h-tiny sub { font-size: 8px; font-weight: 500; color: var(--color-text-2); vertical-align: baseline; margin-left: 1px; }
-.h-decisions .h-path > span:not(.h-tiny) { min-width: 40px; }
 .h-effects { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .h-effects .h-chip { cursor: default; padding: 0 6px; }
 .setup__grid--money { grid-template-columns: 1fr 1fr 72px; }
@@ -305,13 +320,8 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .h-heads__head:empty { display: none; }
 
 /* a possibility can be committed as a step; the numbers move when one is */
-.h-could li { position: relative; }
-.h-could__commit { position: absolute; right: 52px; top: 6px; opacity: 0; background: var(--color-paper); padding: 0 4px; border-radius: 4px; }
-.h-could li:hover .h-could__commit, .h-could__commit:focus-visible { opacity: 1; }
-.h-could__bar { transition: width 900ms var(--motion-ease); }
-.h-could li { transition: transform 600ms var(--motion-ease); }
-.h-could__pct { transition: color 600ms; }
-.h-could.is-fresh .h-could__pct { color: var(--color-coral-deep); }
+.h-stage li { transition: transform 600ms var(--motion-ease); }
+.h-stage__row { transition: background var(--motion-quick); }
 
 /* the 3D preview inset in Line view: the same place, small, labels off; a click switches views */
 .h-map__frame--world { position: relative; }
@@ -321,11 +331,9 @@ kbd { font-family: var(--font-body); font-size: 12px; line-height: 16px; color: 
 .h-map__switch:hover { box-shadow: inset 0 0 0 2px var(--color-coral); }
 
 /* the wider right rail, used: labels on one line where they fit, a fixed column for the numbers, longer sparklines */
-.h-could__row { grid-template-columns: 16px minmax(0, 1fr) 44px; }
-.h-could__label { font-size: 14px; line-height: 20px; }
+.h-stage__label { font-size: 14px; line-height: 20px; }
 .h-measure { grid-template-columns: minmax(0, 1fr) 32px 96px; }
 .h-measure svg { width: 96px; }
-.h-could__commit { right: 60px; }
 
 /* ---- both rails can be dragged wider or narrower, and folded to a tab */
 .hud__left, .hud__right { position: relative; }

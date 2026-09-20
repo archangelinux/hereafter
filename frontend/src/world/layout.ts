@@ -433,7 +433,8 @@ export function layoutWorld(opts: { now: string; events: LifeEvent[]; views: Bra
           const from = index === 0 ? 0 : stepEnds[index - 1]
           // the choice itself (head) stands at the end of the first step: what a merge commits
           const d = isHead(e) ? stepEnds[0] : from + (0.35 + (0.5 * (n + 1)) / (step.events.length + 1)) * (stepEnds[index] - from)
-          if ((d <= drawLen - 0.15 && d >= fromD) || isHead(e)) nodes.push({ id: e.id, kind: 'event', step: index, d, label: e.text, caption: step.label, basis: basisOf(e), domain: e.domain, event: e })
+          // an event is a step you walk through, not a mark on the band: only its label speaks, when you reach it
+          if (isHead(e)) nodes.push({ id: e.id, kind: 'event', step: index, d, label: e.text, caption: step.label, basis: basisOf(e), domain: e.domain, event: e })
         })
       })
       for (const c of view.branch.commits ?? []) {

@@ -74,6 +74,8 @@ export interface Branch {
 
 export interface Commit {
   id: string
+  /** set when the commit assumed one of the listed possibilities */
+  event_key?: string
   branch_id: string
   year: number
   at: string
@@ -89,6 +91,11 @@ export type Basis = 'sourced' | 'estimated' | 'background'
 export interface PossibleEvent {
   key: string
   label: string
+  /** what it cannot happen without: pinning it pins these too */
+  /** the steps between which it can happen: [first, last] */
+  window?: [number, number]
+  requires?: string[]
+  depends_on?: { key: string; relation?: 'requires' | 'likelier' | 'less_likely' | 'prevents' }[]
   domain: string
   basis: Basis
   evidence_id: string | null
@@ -115,7 +122,7 @@ export interface Measures {
 export interface Breakdown {
   base: { kind: 'sourced' | 'personal' | 'estimated' | 'background'; value: number; range: [number, number] | null; evidence_id: string | null; reference_class: string | null; note: string }
   personality: { trait: 'O' | 'C' | 'E' | 'A' | 'N'; trait_name: string; z: number; confidence: number; direction: 1 | -1; beta: number; shift_logodds: number; basis: 'published' | 'assumed' }[]
-  dependencies: { on: string; label: string; multiplier: number }[]
+  dependencies: { on: string; label: string; multiplier: number; relation?: string; note?: string }[]
   adjusted: number
   simulated: number
 }
