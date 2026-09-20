@@ -25,5 +25,13 @@ export function Brand({ kind }: { kind: Platform }) {
           <circle cx="17.3" cy="6.7" r="1" fill="currentColor" stroke="none" />
         </svg>
       )
+    case 'site':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="8.8" />
+          <ellipse cx="12" cy="12" rx="3.8" ry="8.8" />
+          <path d="M3.2 12h17.6" />
+        </svg>
+      )
   }
 }
