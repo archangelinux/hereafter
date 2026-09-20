@@ -31,6 +31,8 @@ interface Props {
   onAnswer: (q: Question, a: string) => void
   onSkip: (q: Question) => void
   onModel: () => void
+  /** open the numbers behind the recommendation, when this decision has them */
+  onNumbers?: () => void
   /** commit a set of possibilities: "assume these happen". One commit, however many are ticked. */
   onPin: (keys: string[]) => void
   step: number | null
@@ -89,6 +91,9 @@ export function MergePanel(p: Props) {
       </ul>
 
       <div className="h-merge__rest">
+        {scenario.analysis && p.onNumbers && (
+          <p className="h-merge__numbers"><button type="button" className="h-chip" onClick={p.onNumbers}>Show the numbers</button><span className="h-muted">{scenario.analysis.final ? scenario.analysis.headline : 'what it says so far'}</span></p>
+        )}
         {p.question && head?.branch.status === 'open' && (
           <div className="h-ask">
             <p><b>{p.question.text}</b></p>

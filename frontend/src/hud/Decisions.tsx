@@ -16,12 +16,15 @@ interface Props {
   onFocus: (scenarioId: string) => void
   onNew: () => void
   onEdit: (scenario: Scenario, patch: TicketPatch) => void
+  /** remove an open decision and its paths (asked for first, inline) */
+  onDelete: (scenario: Scenario) => void
   examples?: ExamplesEntry | null
 }
 
 /** The decisions still to make, as a plain list: a row per decision, the one being considered marked. Decided ones live in the log; the paths live in the panel on the right. */
-export function Decisions({ scenarios, views, focusId, onFocus, onNew, onEdit, examples }: Props) {
+export function Decisions({ scenarios, views, focusId, onFocus, onNew, onEdit, onDelete, examples }: Props) {
   const [editing, setEditing] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState<string | null>(null)
   const list = useRef<HTMLUListElement>(null)
   // the decision being considered is always in view
   useEffect(() => {
@@ -61,7 +64,26 @@ export function Decisions({ scenarios, views, focusId, onFocus, onNew, onEdit, e
                   <button type="button" className="h-decision__title" title={focused ? s.situation : `${s.situation} — consider this one`} aria-current={focused || undefined} onClick={() => onFocus(s.id)}>{s.situation}</button>
                 )}
                 {state === 'open' && focused && <button type="button" className="h-link h-decision__edit" onClick={() => setEditing(edit ? null : s.id)}>{edit ? 'Done' : 'Edit'}</button>}
+                {state === 'open' && !s.example && !edit && (
+                  <button type="button" className="h-decision__trash" aria-label={`Delete “${s.situation}”`} aria-expanded={confirming === s.id} title="Delete this decision" onClick={() => setConfirming(confirming === s.id ? null : s.id)}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                      <path d="M4 7h16" /><path d="M9 7V4.5h6V7" /><path d="M6.2 7l.9 12a2 2 0 0 0 2 1.8h5.8a2 2 0 0 0 2-1.8l.9-12" /><path d="M10 11v6M14 11v6" />
+                    </svg>
+                  </button>
+                )}
               </div>
+              {confirming === s.id && (
+                <div className="h-decision__confirm" role="alertdialog" aria-label="Delete this decision?" onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setConfirming(null))}>
+                  <span>
+                    Delete this decision and its paths?
+                    {scenarios.some((x) => x.assuming_branch_id && s.branch_ids.includes(x.assuming_branch_id)) ? ' Decisions made inside them go too.' : ''} This can’t be undone.
+                  </span>
+                  <span className="h-decision__confirm-actions">
+                    <button type="button" className="h-link h-decision__danger" onClick={() => (setConfirming(null), onDelete(s))}>Delete</button>
+                    <button type="button" className="h-link" autoFocus onClick={() => setConfirming(null)}>Keep</button>
+                  </span>
+                </div>
+              )}
               <p className="h-decision__meta">
                 {state === 'open' && !s.example ? (
                   <button type="button" className="h-tag" title="Wrong? Click to change" onClick={() => onEdit(s, { scale: scale === 'big' ? 'small' : 'big' })}>{scale === 'big' ? 'life' : 'day to day'}</button>

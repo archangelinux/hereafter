@@ -31,6 +31,7 @@ class EventStore(Protocol):
     def search_evidence(self, person_id: str, branch_id: str, text: str, size: int = 8) -> list[Evidence]: ...
     def counts_by_source(self, person_id: str) -> dict[str, int]: ...
     def erase(self, person_id: str) -> dict[str, int]: ...
+    def delete_branches(self, person_id: str, branch_ids: list[str]) -> dict[str, int]: ...
     def origins(self, person_id: str) -> list[dict]: ...
     def forget(self, person_id: str, origin: str) -> int: ...
     def index_runs(self, branch, outcome, dates: list[str]) -> None: ...
@@ -379,6 +380,19 @@ class ElasticStore:
             gone[name] = resp["deleted"]
         return gone
 
+    def delete_branches(self, person_id: str, branch_ids: list[str]) -> dict[str, int]:
+        """Remove what was simulated and researched for these paths (their events, evidence and runs).
+        Never anything on main: the past is not rewritten."""
+        ids = [b for b in branch_ids if b and b != "main"]
+        gone = {"events": 0, "evidence": 0, "runs": 0}
+        if not ids:
+            return gone
+        query = {"bool": {"filter": [{"term": {"person_id": person_id}}, {"terms": {"branch_id": ids}}]}}
+        for name, index in (("events", self.index), ("evidence", self.evidence_index), ("runs", self.runs_index)):
+            resp = self.es.options(request_timeout=300).delete_by_query(index=index, query=query, refresh=True, conflicts="proceed")
+            gone[name] = resp["deleted"]
+        return gone
+
 
 class LocalStore:
     """Same surface over SQLite so the whole app runs with no cloud credentials."""
@@ -507,6 +521,18 @@ class LocalStore:
         gone = {"events": c.execute("SELECT COUNT(*) FROM events WHERE person_id=?", (person_id,)).fetchone()[0],
                 "evidence": c.execute("SELECT COUNT(*) FROM evidence WHERE person_id=?", (person_id,)).fetchone()[0]}
         return gone  # the rows themselves go in db.erase_person, inside one transaction
+
+    def delete_branches(self, person_id: str, branch_ids: list[str]) -> dict[str, int]:
+        ids = [b for b in branch_ids if b and b != "main"]  # never anything on main
+        gone = {"events": 0, "evidence": 0, "runs": 0}
+        if not ids:
+            return gone
+        marks = ",".join("?" * len(ids))
+        c = db.conn()
+        for table in ("events", "evidence"):
+            gone[table] = c.execute(f"SELECT COUNT(*) FROM {table} WHERE person_id=? AND branch_id IN ({marks})", (person_id, *ids)).fetchone()[0]
+            db._exec(f"DELETE FROM {table} WHERE person_id=? AND branch_id IN ({marks})", (person_id, *ids))
+        return gone
 
 
 def _strip(source: dict) -> dict:

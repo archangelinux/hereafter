@@ -1,19 +1,23 @@
 // The offline sandbox, behaving like the backend: scenarios branch, commits re-draw and undo,
-// merges are permanent, research plays back over a few seconds. It holds no sample data (see demo.ts).
+// merges are permanent, research plays back over a few seconds. What it plays is the scripted demo in demo.ts.
 
 import { applyPatch, LOCAL_MODEL, type Api } from '../api'
 import { compareViews, plainChapter } from '../derive'
 import type { BranchView, Commit, LifeEvent, Scenario } from '../types'
-import { demoBranches, demoChapters, demoEvidence, demoInventory, demoPerson, demoRare, demoRareChapters, demoResearch, demoScenarios, demoState, demoTrunkEvents, THIS_YEAR } from './demo'
+import { ACTIONS } from './decision'
+import { analysisFor, DEMO_SCRIPT, demoBranches, demoChapters, demoEvidence, demoInventory, demoPerson, demoQuestions, demoRare, demoRareChapters, demoResearch, demoState, demoTrunkEvents, THIS_YEAR } from './demo'
 
 const RESEARCH_STEP_MS = 1400
 
 export function createFixture(): Api {
-  // ?offline&empty: the same person before any decision, to see the empty state
-  const blank = new URLSearchParams(location.search).has('empty')
-  const events: LifeEvent[] = structuredClone(demoTrunkEvents).filter((e) => !blank || e.event_type !== 'decision')
-  const views: BranchView[] = blank ? [] : structuredClone(demoBranches)
-  const scenarios: Scenario[] = blank ? [] : structuredClone(demoScenarios)
+  // The demo opens on a clean island: Sam's past on main and nothing to decide. The presenter asks the question live
+  // and it plays out on rails. ?preload opens with the decision already asked, as a fallback.
+  const preload = new URLSearchParams(location.search).has('preload')
+  const events: LifeEvent[] = structuredClone(demoTrunkEvents)
+  const views: BranchView[] = []
+  const scenarios: Scenario[] = []
+  const templates = demoBranches
+  const baseSolidity = new Map<string, number[]>() // each path's solidity before any answer moved it
   const undoStack = new Map<string, BranchView[]>()
   const researchStarted = new Map<string, number>()
   const chapterAskedAt = new Map<string, number>()
@@ -43,12 +47,52 @@ export function createFixture(): Api {
       v.branch.revision += 1
       formingYears.delete(v.branch.id)
     }
-    const steps = demoResearch(v.branch.label)
+    const steps = demoResearch(templateOf(v), v.branch.label)
     const shown = Math.floor((Date.now() - started) / RESEARCH_STEP_MS) + 1
     if (shown >= steps.length && v.branch.research !== 'done') {
       v.branch.research = 'done'
       v.branch.revision += 1
     } else if (shown < steps.length) v.branch.research = 'running'
+  }
+
+  /** Whatever is typed maps, in order, onto the three scripted lives: talk, follow, bury. */
+  function makeDecision(person_id: string, situation: string, options: { title: string; details: string; deadline?: string }[], formed: boolean, assuming: string | null) {
+    const id = `sc-local-${++counter}`
+    const made: BranchView[] = options.map((o, i) => {
+      const template = templates[i % templates.length]
+      const bid = formed ? template.branch.id : `br-local-${++counter}`
+      const copy: BranchView = structuredClone(template)
+      copy.branch = {
+        ...copy.branch, id: bid, label: o.title, scenario_id: id, option_id: `op-${bid}`, status: 'open', forked_at: today(), commits: [],
+        precondition: null, carried_event_id: null, research: formed ? 'done' : 'pending', revision: 1,
+      }
+      copy.years = copy.years.map((y) => ({ ...y, events: y.events.map((e) => ({ ...e, id: e.id.replace(template.branch.id, bid), branch_id: bid })) }))
+      baseSolidity.set(bid, copy.years.map((y) => y.solidity))
+      if (!formed) {
+        researchStarted.set(bid, Date.now() + i * 900)
+        // returned at once as a placeholder; the life grows a few seconds later
+        formingYears.set(bid, copy.years)
+        copy.years = []
+        copy.branch.forming = true
+      }
+      return copy
+    })
+    const scenario: Scenario = {
+      id, person_id, situation, created_at: today(), status: 'open', decided_branch_id: null,
+      horizon: { unit: 'days', count: 30 }, scale: 'small',
+      questions: demoQuestions(id, made.map((m) => m.branch.option_id!)),
+      analysis: analysisFor({}),
+      assuming_branch_id: assuming,
+      options: options.map((o, i) => ({ id: made[i].branch.option_id!, title: o.title, details: o.details, deadline: null })),
+      branch_ids: made.map((m) => m.branch.id),
+    }
+    return { scenario, made }
+  }
+
+  if (preload) {
+    const { scenario, made } = makeDecision(demoPerson.id, DEMO_SCRIPT.decision, DEMO_SCRIPT.paths.map((title) => ({ title, details: '' })), true, null)
+    views.push(...made)
+    scenarios.push(scenario)
   }
 
   return {
@@ -72,38 +116,8 @@ export function createFixture(): Api {
       return structuredClone(scenarios)
     },
     async createScenario(person_id, situation, options, extra) {
-      const horizon = extra?.horizon
-      const id = `sc-local-${++counter}`
-      const made: BranchView[] = options.map((o, i) => {
-        // a long horizon borrows the long sample lives; anything else borrows tonight's
-        const pool = views.filter((v) => v.branch.scenario_id === (horizon?.unit === 'years' || extra?.scale === 'big' ? 'sc-job' : 'sc-friday'))
-        const template = pool[i % pool.length]
-        if (!template) throw new Error('The offline sandbox has no sample data to imagine a decision from. Start the backend.')
-        const bid = `br-local-${++counter}`
-        const copy: BranchView = structuredClone(template)
-        copy.branch = {
-          ...copy.branch, id: bid, label: o.title, scenario_id: id, option_id: `op-${bid}`, status: 'open', forked_at: today(), commits: [],
-          precondition: o.deadline ? `deadline: ${o.deadline}` : null, carried_event_id: null, research: 'pending', revision: 1,
-        }
-        copy.years = copy.years.map((y) => ({ ...y, events: y.events.map((e) => ({ ...e, id: e.id.replace(template.branch.id, bid), branch_id: bid })) }))
-        researchStarted.set(bid, Date.now() + i * 900)
-        // returned at once as a placeholder; its steps land a few seconds later
-        formingYears.set(bid, copy.years)
-        copy.years = []
-        copy.branch.forming = true
-        return copy
-      })
-      // an earlier open scenario steps aside only in the sample, to keep the line readable
+      const { scenario, made } = makeDecision(person_id, situation, options, false, extra?.assuming_branch_id ?? null)
       views.push(...made)
-      const scenario: Scenario = {
-        id, person_id, situation, created_at: today(), status: 'open', decided_branch_id: null,
-        horizon: horizon ?? { unit: 'weeks', count: 12 },
-        questions: [],
-        assuming_branch_id: extra?.assuming_branch_id ?? null,
-        scale: extra?.scale ?? (horizon?.unit === 'years' ? 'big' : 'small'),
-        options: options.map((o, i) => ({ id: made[i].branch.option_id!, title: o.title, details: o.details, deadline: o.deadline ?? null })),
-        branch_ids: made.map((m) => m.branch.id),
-      }
       scenarios.push(scenario)
       return structuredClone({ scenario, branches: made })
     },
@@ -126,29 +140,37 @@ export function createFixture(): Api {
     async answer(scenarioId, answers) {
       const scenario = scenarios.find((x) => x.id === scenarioId)
       if (!scenario) throw new Error('No such decision.')
-      const touched = new Set<string>()
       for (const question of scenario.questions) {
         const given = answers[question.id]?.trim()
         if (!given || question.answer) continue
         question.answer = given
         events.push(told(`${question.text} ${given}`, 'answer'))
-        const optionIds = question.applies_to.length ? question.applies_to : scenario.options.map((o) => o.id)
-        optionIds.forEach((id) => touched.add(id))
       }
-      // more in, clearer futures: the branches an answer speaks to firm up
-      const changed = views.filter((v) => v.branch.scenario_id === scenarioId && touched.has(v.branch.option_id ?? ''))
-      for (const v of changed) {
+      // the odds move with what was said; the path the numbers now favour firms up and the others recede
+      const said: Record<string, string> = {}
+      for (const q of scenario.questions) if (q.answer) said[q.id.replace(`-${scenario.id}`, '')] = q.answer
+      scenario.analysis = analysisFor(said)
+      const best = scenario.analysis.recommended
+      scenario.branch_ids.forEach((bid, i) => {
+        const action = ACTIONS[i % ACTIONS.length]
+        const factor = action === best ? 1.12 : action === 'follow' ? 0.55 : 0.85
+        const v = views.find((x) => x.branch.id === bid)
+        if (!v) return
+        const base = baseSolidity.get(bid) ?? []
+        const restyle = (years: BranchView['years']) => years.map((y, n) => ({ ...y, solidity: Math.min(0.98, Math.max(0.3, (base[n] ?? y.solidity) * factor)) }))
+        v.years = restyle(v.years)
+        const held = formingYears.get(bid)
+        if (held) formingYears.set(bid, restyle(held))
         v.branch.revision += 1
-        v.years = v.years.map((y) => ({ ...y, solidity: Math.min(0.98, 0.6 + (y.solidity - 0.6) * 2.4 + 0.12) }))
-      }
+      })
       return structuredClone({ scenario, branches: views.filter((v) => v.branch.scenario_id === scenarioId) })
     },
     async research(branchId) {
       const v = find(branchId)
       const started = researchStarted.get(branchId)
-      if (started === undefined) return { branch_id: branchId, research: v.branch.research, steps: v.branch.research === 'done' ? demoResearch(v.branch.label) : [] }
+      if (started === undefined) return { branch_id: branchId, research: v.branch.research, steps: v.branch.research === 'done' ? demoResearch(templateOf(v), v.branch.label) : [] }
       settleResearch(v)
-      const steps = demoResearch(v.branch.label)
+      const steps = demoResearch(templateOf(v), v.branch.label)
       const shown = Math.max(0, Math.min(steps.length, Math.floor((Date.now() - started) / RESEARCH_STEP_MS) + 1))
       return { branch_id: branchId, research: v.branch.research, steps: steps.slice(0, shown) }
     },
@@ -273,6 +295,29 @@ export function createFixture(): Api {
       const before = events.length
       for (let i = events.length - 1; i >= 0; i--) if (events[i].origin === origin) events.splice(i, 1)
       return { origin, removed: before - events.length }
+    },
+    async deleteScenario(scenarioId) {
+      const scenario = scenarios.find((x) => x.id === scenarioId)
+      if (!scenario) throw new Error('No such decision.')
+      if (scenario.status === 'decided') throw new Error('This decision has been made; the past is not rewritten.')
+      // the decision, and any decision made inside its paths (and inside theirs)
+      const gone = new Set([scenarioId])
+      let grew = true
+      while (grew) {
+        grew = false
+        for (const s of scenarios) {
+          const parent = s.assuming_branch_id ? views.find((v) => v.branch.id === s.assuming_branch_id)?.branch.scenario_id : null
+          if (parent && gone.has(parent) && !gone.has(s.id)) {
+            gone.add(s.id)
+            grew = true
+          }
+        }
+      }
+      if (scenarios.some((s) => gone.has(s.id) && s.status === 'decided')) throw new Error('A decision made inside it has been decided; that stays.')
+      const branches = views.filter((v) => gone.has(v.branch.scenario_id ?? '')).length
+      for (let i = views.length - 1; i >= 0; i--) if (gone.has(views[i].branch.scenario_id ?? '')) views.splice(i, 1)
+      for (let i = scenarios.length - 1; i >= 0; i--) if (gone.has(scenarios[i].id)) scenarios.splice(i, 1)
+      return { deleted: { scenarios: gone.size, branches } }
     },
     async erase() {
       const erased = { events: events.length, evidence: demoEvidence.length, branches: views.length, cached_pages: demoInventory.cached_pages }

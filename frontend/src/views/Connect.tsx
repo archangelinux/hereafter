@@ -3,7 +3,8 @@ import { PLATFORMS, type Platform } from './platforms'
 
 interface Props {
   selected: Platform[]
-  onChange: (selected: Platform[]) => void
+  /** flip one account on or off (the parent updates from its latest state, so quick clicks never overwrite each other) */
+  onToggle: (key: Platform) => void
 }
 
 /**
@@ -11,8 +12,7 @@ interface Props {
  * (OfferingDraft.sources): nothing is read from the account yet. Reading them, from the person's own browser
  * through Browserbase, is wired in where the draft is sent (see `offer` in App.tsx).
  */
-export function Connect({ selected, onChange }: Props) {
-  const toggle = (key: Platform) => onChange(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key])
+export function Connect({ selected, onToggle }: Props) {
 
   return (
     <div className="setup__field">
@@ -29,7 +29,7 @@ export function Connect({ selected, onChange }: Props) {
                 aria-pressed={on}
                 aria-label={p.label}
                 title={on ? `${p.label} selected` : `Select ${p.label}`}
-                onClick={() => toggle(p.key)}
+                onClick={() => onToggle(p.key)}
               >
                 <Brand kind={p.key} />
                 {on && (

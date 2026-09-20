@@ -36,6 +36,17 @@ structured `text`. `backend/tests` runs entirely in this mode.
 cd backend && .venv/bin/python -m pytest -q
 ```
 
+## The demo (no backend, no keys)
+
+`http://localhost:5642/?demo` (after `npm run dev` in `frontend/`) plays a scripted walkthrough that never touches the network or a real person's data:
+
+1. Pick GitHub, LinkedIn and Instagram, then **Continue**: a short "Connecting your accounts" screen, then the main page with "What I learned about you".
+2. Press **N**, then **Enter**: the composer types *"I like this girl at hackathon. What should I do?"* and its three options; **Enter** again branches.
+3. The paths grow and **The numbers** opens: the chance she is interested (a Bayesian update: a starting point times one likelihood ratio per fact), a payoff for each choice in each possible world, and the **expected value** of each with its spread. Two questions ("has she made eye contact?", "is she with someone?") update the odds live, ending in a recommendation that can flip to "don't approach".
+
+`?demo&preload` opens with the question already asked. The maths is real and tested (`npm run test:decision`); the profile and the loading animation are scripted sample data.
+Every figure is tagged **published** (with the source and the sentence it was read in) or **assumption** (a demo input: the starting probability, the likelihood ratios, the payoffs). It is an illustrative model, not dating advice.
+
 ## How it is put together
 
 | | |

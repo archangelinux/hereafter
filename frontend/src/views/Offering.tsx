@@ -86,7 +86,7 @@ export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }:
           </div>
         </div>
 
-        <Connect selected={sources} onChange={setSources} />
+        <Connect selected={sources} onToggle={(key) => setSources((all) => (all.includes(key) ? all.filter((k) => k !== key) : [...all, key]))} />
 
         <div className="setup__actions">
           <button type="submit" className="setup__primary" disabled={busy}>{busy ? 'Reading…' : 'Continue'}</button>

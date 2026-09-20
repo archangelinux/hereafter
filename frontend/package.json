@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:decision": "node --experimental-strip-types --no-warnings --import ./scripts/register-ts.mjs scripts/decision.test.mts"
   },
   "devDependencies": {
     "@types/react": "~19.2",

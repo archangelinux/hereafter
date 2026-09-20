@@ -1,6 +1,8 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { clearSession, getApi, loadSession, saveSession, setToken, type Api } from './api'
 import { Decisions } from './hud/Decisions'
+import { Profile } from './hud/Profile'
+import { DEMO_SCRIPT, demoProfile } from './fixtures/demo'
 import { MergePanel } from './hud/MergePanel'
 import type { Mode } from './hud/ModeSwitch'
 import { NewDecision } from './hud/NewDecision'
@@ -12,14 +14,17 @@ import { belongsOnLine } from './format'
 import { Line } from './line/Line'
 import { theme } from './theme'
 import type { BranchView, IngestResult, Insets, ResearchStep, TicketPatch, LifeEvent, Question, Scenario, Session, TrunkResponse, Zone } from './types'
+import { Analysis } from './views/Analysis'
 import { Compare } from './views/Compare'
+import { Connecting, connectingMs } from './views/Connecting'
+import type { Platform } from './views/platforms'
 import { InventoryView } from './views/InventoryView'
 import { LogView } from './views/LogView'
 import { ModelSheet } from './views/ModelSheet'
 import { Offering, type OfferingDraft } from './views/Offering'
 import { Tell } from './views/Tell'
 
-type Sheet = 'offering' | 'compare' | 'model' | 'log' | 'inventory' | 'tell' | null
+type Sheet = 'offering' | 'compare' | 'analysis' | 'model' | 'log' | 'inventory' | 'tell' | null
 
 /** Both views of the same place take exactly these props. */
 interface ViewProps {
@@ -94,7 +99,12 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(params.get('branch'))
   const [hereStep, setHereStep] = useState<number | null>(null)
   const [seek, setSeek] = useState<{ step: number; nonce: number } | null>(null)
-  const [sheet, setSheet] = useState<Sheet>(params.get('sheet') === 'decision' ? null : ((params.get('sheet') as Sheet) ?? null))
+  // the demo opens on the accounts step (?preload skips it)
+  const demoStart = (params.has('demo') || params.has('offline')) && !params.has('preload') && !params.has('sheet')
+  const [sheet, setSheet] = useState<Sheet>(demoStart ? 'offering' : params.get('sheet') === 'decision' ? null : ((params.get('sheet') as Sheet) ?? null))
+  const [connecting, setConnecting] = useState<Platform[] | null>(null) // the short wait after the accounts are chosen
+  const [welcome, setWelcome] = useState(false) // what was learned, shown beside the main page
+  const [numbersShown, setNumbersShown] = useState<string[]>([])
   const [deciding, setDeciding] = useState(params.get('sheet') === 'decision')
   const [research, setResearch] = useState<ResearchStep | null>(null)
   const [committing, setCommitting] = useState(false)
@@ -124,7 +134,8 @@ export default function App() {
   const scenarios = ownScenarios
   const trunk = ownTrunk
   useEffect(() => {
-    if (api?.offline && !session) setSession({ person_id: 'offline', token: 'offline' })
+    // the offline demo is always the sandbox person: a session left over from a real backend must not be used with it
+    if (api?.offline && session?.person_id !== 'offline') setSession({ person_id: 'offline', token: 'offline' })
   }, [api, session])
 
   const refresh = useCallback(async () => {
@@ -291,6 +302,31 @@ export default function App() {
     }
   }
 
+  /** remove an open decision and its paths (and any decision made inside them) */
+  const deleteDecision = async (s: Scenario) => {
+    if (!api) return
+    setError(null)
+    try {
+      await api.deleteScenario(s.id)
+      // the decision, and the ones made inside its paths, leave at once; a refresh then confirms it
+      const gone = new Set([s.id])
+      for (let grew = true; grew; ) {
+        grew = false
+        for (const x of scenarios) {
+          const parent = x.assuming_branch_id ? views.find((v) => v.branch.id === x.assuming_branch_id)?.branch.scenario_id : null
+          if (parent && gone.has(parent) && !gone.has(x.id)) (gone.add(x.id), (grew = true))
+        }
+      }
+      if (active?.branch.scenario_id && gone.has(active.branch.scenario_id)) switchTo(null)
+      if (focusedId && gone.has(focusedId)) setFocusedId(null)
+      setScenarios((all) => all.filter((x) => !gone.has(x.id)))
+      setViews((all) => all.filter((v) => !gone.has(v.branch.scenario_id ?? '')))
+      void refresh()
+    } catch (err) {
+      fail(err, 'That decision could not be deleted just now.')
+    }
+  }
+
   const merge = async (confirm: string) => {
     if (!api || !active) return
     setBusy('merge')
@@ -310,6 +346,8 @@ export default function App() {
   const offer = async (draft: OfferingDraft) => {
     if (!api) return
     setBusy('offer')
+    const started = Date.now()
+    if (draft.sources.length) setConnecting(draft.sources)
     try {
       let s = session
       if (!s) {
@@ -318,11 +356,22 @@ export default function App() {
         setToken(s.token || null)
         setSession(s)
       }
-      setIngested(await api.ingest({
+      const result = await api.ingest({
         person_id: s.person_id, text: draft.text || undefined,
         files: draft.files, // draft.sources (the accounts chosen) is not sent yet: reading them comes with the Browserbase hookup
-      }))
+      })
+      // hold the connecting screen for its whole length, so a quick answer does not make it flash
+      if (draft.sources.length) await new Promise((r) => setTimeout(r, Math.max(0, connectingMs(draft.sources.length) - (Date.now() - started))))
+      setConnecting(null)
+      if (api.offline) {
+        // the demo goes straight to the main page, with what was learned beside it
+        setIngested(null)
+        setSheet(null)
+        setWelcome(draft.sources.length > 0)
+        await refresh()
+      } else setIngested(result)
     } catch {
+      setConnecting(null)
       setIngested('silent')
     } finally {
       setBusy(null)
@@ -428,6 +477,18 @@ export default function App() {
     : active.branch.status === 'open' && (done.commit ?? 0) + (done.add ?? 0) < 2 && advances < 7 ? 'Commit pins what you would have happen and redraws what follows. Branch splits the path. Both can be undone — only Merge is permanent.'
     : active.branch.status === 'open' && (done.merge ?? 0) < 2 ? 'Merge makes this choice real. Or pick another path.' : null
 
+  // the numbers open by themselves once the paths have grown, so the growing is seen first
+  useEffect(() => {
+    if (!shown?.analysis || sheet || deciding || numbersShown.includes(shown.id)) return
+    const grown = shown.branch_ids.every((id) => {
+      const v = views.find((x) => x.branch.id === id)
+      return !!v && !v.branch.forming && v.years.length > 0
+    })
+    if (!grown) return
+    const t = setTimeout(() => (setNumbersShown((all) => [...all, shown.id]), setSheet('analysis')), 1400)
+    return () => clearTimeout(t)
+  }, [shown, views, sheet, deciding, numbersShown])
+
   const rails = useRails()
   const { zones, free } = useZones([rails.key, hint, deciding, shown?.id, !!active, view, mapOpen, asking0(scenario, active, skipped), scenarios.length, !!trunk])
   const watch = active && !active.branch.example && (active.branch.forming || active.years.length === 0 || active.branch.research === 'pending' || active.branch.research === 'running') ? active.branch.id : null
@@ -454,7 +515,7 @@ export default function App() {
   }
 
   const firstRun = !session
-  const showOffering = firstRun || sheet === 'offering' || ingested !== null
+  const showOffering = (firstRun || sheet === 'offering' || ingested !== null) && !connecting
   const asking = active?.branch.status === 'open' ? (scenario?.questions ?? []).filter((q) => !q.answer && !skipped.includes(q.id) && (q.applies_to.length === 0 || q.applies_to.includes(active.branch.option_id ?? ''))) : []
 
   const viewProps: ViewProps | null = trunk && {
@@ -501,7 +562,7 @@ export default function App() {
           <header className="h-brand">
             <button type="button" className="h-fold" onClick={() => rails.toggle('left')} title="Fold this panel away" aria-label="Fold the decisions panel away">‹</button>
             <h1>Hereafter</h1>
-            <p>{trunk?.person.display_name || ''}{trunk?.person.personality?.mbti ? ` · ${trunk.person.personality.mbti}` : ''}{api.offline ? ' · no data' : ''}</p>
+            <p>{trunk?.person.display_name || ''}{trunk?.person.personality?.mbti ? ` · ${trunk.person.personality.mbti}` : ''}{api.offline ? ' · demo' : ''}</p>
           </header>
           <Decisions
             scenarios={scenarios}
@@ -509,8 +570,10 @@ export default function App() {
             focusId={shown?.id ?? null}
             onFocus={(id) => (focusOn(id), setRail(false))}
             onEdit={(sc, patch) => void editTicket(sc, patch)}
+            onDelete={(sc) => void deleteDecision(sc)}
             onNew={() => (setAssuming(null), setDeciding(true), setRail(false))}
           />
+          {api.offline && welcome && <Profile facts={demoProfile} onClose={() => setWelcome(false)} />}
           {error && !shown && <p className="h-note h-note--error">{error}</p>}
           <div className="h-fill" />
           {/* the two views mirror each other: each shows a small live preview of the other. Only one full World is ever mounted. */}
@@ -553,7 +616,7 @@ export default function App() {
         <div className="hud__bottom">
           {hint && !deciding && <p className="h-hint" key={hint}>{hint}</p>}
           {deciding && session ? (
-            <NewDecision inside={assuming ? assuming.branch.label : null} busy={busy === 'decide'} error={error} onCreate={(d, ps) => void createDecision(d, ps)} onClose={() => setDeciding(false)} />
+            <NewDecision inside={assuming ? assuming.branch.label : null} busy={busy === 'decide'} error={error} script={api.offline && !assuming ? DEMO_SCRIPT : undefined} onCreate={(d, ps) => void createDecision(d, ps)} onClose={() => setDeciding(false)} />
           ) : null}
 
         </div>
@@ -586,6 +649,7 @@ export default function App() {
               onCommit={real(() => setCommitting(true))}
               onUndo={() => void undo()}
               onCompare={() => setSheet('compare')}
+              onNumbers={() => setSheet('analysis')}
               onInside={real(() => (setAssuming(active), setDeciding(true)))}
               onAnswer={(q, a2) => void answer(q, a2)}
               onSkip={(q) => setSkipped((all) => [...all, q.id])}
@@ -598,6 +662,11 @@ export default function App() {
         </div>
       </div>
 
+      {sheet === 'analysis' && shown?.analysis && (
+        <Analysis analysis={shown.analysis} situation={shown.situation} question={shown.questions.find((q) => !q.answer) ?? null} answered={shown.questions.filter((q) => q.answer).length} total={shown.questions.length}
+          busy={!!busy?.startsWith('answer:')} onAnswer={(q, a2) => void answer(q, a2)} onClose={() => setSheet(null)} />
+      )}
+      {connecting && <Connecting platforms={connecting} />}
       {sheet === 'compare' && active && <Compare api={api} views={[active, ...siblings.filter((s) => s.branch.id !== active.branch.id)]} scenario={scenario} onSwitch={(id) => (switchTo(id), setSheet(null))} onClose={() => setSheet(null)} />}
       {sheet === 'model' && <ModelSheet api={api} onClose={() => setSheet(null)} />}
       {sheet === 'log' && trunk && <LogView events={trunk.events} reconciliation={trunk.reconciliation ?? []} onTell={() => setSheet('tell')} onClose={() => setSheet(null)} />}

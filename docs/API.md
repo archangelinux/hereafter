@@ -487,3 +487,13 @@ would belong to the moment). `/compare` adds `measures: {[branch_id]: end}` and 
 `POST /people` and `/ingest` accept `income`, `net_worth`, `currency`; `/ingest` also picks them up from the person's own words
 when stated; `/trunk.person.money`, `/ingest.money` and `/inventory.money` return them. With the LLM off all effects are zero.
 `Scenario += { scale_chosen, assuming_at, fork_at, assumed_facts }`.
+
+---
+
+# Deleting a decision
+
+`POST /scenarios/{id}/delete` → `{deleted: {scenarios, branches}}`. Removes an **open** decision, its paths, everything written for them
+(chapters, research feed, narration, evidence, simulated events and runs) and any decision made inside those paths. POST, like `/erase` and
+`/forget`: the API has no DELETE. What the person *told* Hereafter (answers) stays on main, and nothing on main is ever touched: the past is
+not rewritten. 409 if the decision (or one made inside it) has been decided, or while its paths are still forming or being researched;
+403 for another person's token; 404 for an unknown id.
