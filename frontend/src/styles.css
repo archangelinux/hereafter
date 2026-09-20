@@ -320,7 +320,11 @@ input:focus, textarea:focus { outline: none; border-bottom-color: var(--color-co
 
 /* ---------------------------------------------------------------- setup (first screen): a compact, plain form */
 
-.setup-ground { position: fixed; inset: 0; z-index: 10; display: grid; place-items: start center; overflow-y: auto; padding: clamp(24px, 7vh, 72px) 16px 24px; background: rgba(253, 246, 236, 0.72); animation: fade var(--motion-medium) both; }
+.setup-ground { position: fixed; inset: 0; z-index: 10; display: grid; place-items: start center; overflow-y: auto; padding: clamp(24px, 7vh, 72px) 16px 24px; background: rgba(253, 246, 236, 0.66); backdrop-filter: blur(28px) saturate(1.05); -webkit-backdrop-filter: blur(28px) saturate(1.05); animation: fade var(--motion-medium) both; }
+/* when the setup screens go, the blur clears slowly over the main page instead of snapping off */
+.setup-ground--reveal { pointer-events: none; animation: setup-reveal 900ms var(--motion-ease) forwards; }
+@keyframes setup-reveal { from { background: rgba(253, 246, 236, 0.66); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); } to { background: rgba(253, 246, 236, 0); backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0); } }
+@media (prefers-reduced-motion: reduce) { .setup-ground--reveal { display: none; } }
 .setup { width: min(540px, 100%); background: var(--color-paper); border: 1px solid var(--color-hairline); border-radius: 16px; padding: 34px 40px 32px; box-shadow: 0 24px 48px -36px rgba(92, 83, 71, 0.5); font-family: var(--font-body); font-size: 14px; line-height: 20px; color: var(--color-text); }
 .setup__head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
 .setup__brand { font-family: var(--font-display); font-style: italic; font-size: 18px; line-height: 22px; color: var(--color-text-2); }

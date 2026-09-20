@@ -21,7 +21,6 @@ export function Profile({ facts, onClose }: { facts: Fact[]; onClose: () => void
           </li>
         ))}
       </ul>
-      <p className="h-muted">Sample profile for this demo. Only your own accounts; nothing about anyone else.</p>
     </section>
   )
 }

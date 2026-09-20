@@ -14,7 +14,6 @@ import { belongsOnLine } from './format'
 import { Line } from './line/Line'
 import { theme } from './theme'
 import type { BranchView, IngestResult, Insets, ResearchStep, TicketPatch, LifeEvent, Question, Scenario, Session, TrunkResponse, Zone } from './types'
-import { Analysis } from './views/Analysis'
 import { Compare } from './views/Compare'
 import { Connecting, connectingMs } from './views/Connecting'
 import type { Platform } from './views/platforms'
@@ -24,7 +23,7 @@ import { ModelSheet } from './views/ModelSheet'
 import { Offering, type OfferingDraft } from './views/Offering'
 import { Tell } from './views/Tell'
 
-type Sheet = 'offering' | 'compare' | 'analysis' | 'model' | 'log' | 'inventory' | 'tell' | null
+type Sheet = 'offering' | 'compare' | 'model' | 'log' | 'inventory' | 'tell' | null
 
 /** Both views of the same place take exactly these props. */
 interface ViewProps {
@@ -104,7 +103,7 @@ export default function App() {
   const [sheet, setSheet] = useState<Sheet>(demoStart ? 'offering' : params.get('sheet') === 'decision' ? null : ((params.get('sheet') as Sheet) ?? null))
   const [connecting, setConnecting] = useState<Platform[] | null>(null) // the short wait after the accounts are chosen
   const [welcome, setWelcome] = useState(false) // what was learned, shown beside the main page
-  const [numbersShown, setNumbersShown] = useState<string[]>([])
+  const [revealing, setRevealing] = useState(false) // the blur behind the setup screens, clearing
   const [deciding, setDeciding] = useState(params.get('sheet') === 'decision')
   const [research, setResearch] = useState<ResearchStep | null>(null)
   const [committing, setCommitting] = useState(false)
@@ -477,17 +476,17 @@ export default function App() {
     : active.branch.status === 'open' && (done.commit ?? 0) + (done.add ?? 0) < 2 && advances < 7 ? 'Commit pins what you would have happen and redraws what follows. Branch splits the path. Both can be undone — only Merge is permanent.'
     : active.branch.status === 'open' && (done.merge ?? 0) < 2 ? 'Merge makes this choice real. Or pick another path.' : null
 
-  // the numbers open by themselves once the paths have grown, so the growing is seen first
+  // while the setup screens are up the app behind them is blurred; when they go, the blur clears slowly instead of snapping off
+  const setupOpen = !session || sheet === 'offering' || ingested !== null || !!connecting
+  const wasSetupOpen = useRef(setupOpen)
   useEffect(() => {
-    if (!shown?.analysis || sheet || deciding || numbersShown.includes(shown.id)) return
-    const grown = shown.branch_ids.every((id) => {
-      const v = views.find((x) => x.branch.id === id)
-      return !!v && !v.branch.forming && v.years.length > 0
-    })
-    if (!grown) return
-    const t = setTimeout(() => (setNumbersShown((all) => [...all, shown.id]), setSheet('analysis')), 1400)
+    const closed = wasSetupOpen.current && !setupOpen
+    wasSetupOpen.current = setupOpen
+    if (!closed) return
+    setRevealing(true)
+    const t = setTimeout(() => setRevealing(false), 950)
     return () => clearTimeout(t)
-  }, [shown, views, sheet, deciding, numbersShown])
+  }, [setupOpen])
 
   const rails = useRails()
   const { zones, free } = useZones([rails.key, hint, deciding, shown?.id, !!active, view, mapOpen, asking0(scenario, active, skipped), scenarios.length, !!trunk])
@@ -562,7 +561,7 @@ export default function App() {
           <header className="h-brand">
             <button type="button" className="h-fold" onClick={() => rails.toggle('left')} title="Fold this panel away" aria-label="Fold the decisions panel away">‹</button>
             <h1>Hereafter</h1>
-            <p>{trunk?.person.display_name || ''}{trunk?.person.personality?.mbti ? ` · ${trunk.person.personality.mbti}` : ''}{api.offline ? ' · demo' : ''}</p>
+            <p>{trunk?.person.display_name || ''}{trunk?.person.personality?.mbti ? ` · ${trunk.person.personality.mbti}` : ''}</p>
           </header>
           <Decisions
             scenarios={scenarios}
@@ -649,7 +648,6 @@ export default function App() {
               onCommit={real(() => setCommitting(true))}
               onUndo={() => void undo()}
               onCompare={() => setSheet('compare')}
-              onNumbers={() => setSheet('analysis')}
               onInside={real(() => (setAssuming(active), setDeciding(true)))}
               onAnswer={(q, a2) => void answer(q, a2)}
               onSkip={(q) => setSkipped((all) => [...all, q.id])}
@@ -662,11 +660,8 @@ export default function App() {
         </div>
       </div>
 
-      {sheet === 'analysis' && shown?.analysis && (
-        <Analysis analysis={shown.analysis} situation={shown.situation} question={shown.questions.find((q) => !q.answer) ?? null} answered={shown.questions.filter((q) => q.answer).length} total={shown.questions.length}
-          busy={!!busy?.startsWith('answer:')} onAnswer={(q, a2) => void answer(q, a2)} onClose={() => setSheet(null)} />
-      )}
       {connecting && <Connecting platforms={connecting} />}
+      {revealing && !setupOpen && <div className="setup-ground setup-ground--reveal" aria-hidden="true" />}
       {sheet === 'compare' && active && <Compare api={api} views={[active, ...siblings.filter((s) => s.branch.id !== active.branch.id)]} scenario={scenario} onSwitch={(id) => (switchTo(id), setSheet(null))} onClose={() => setSheet(null)} />}
       {sheet === 'model' && <ModelSheet api={api} onClose={() => setSheet(null)} />}
       {sheet === 'log' && trunk && <LogView events={trunk.events} reconciliation={trunk.reconciliation ?? []} onTell={() => setSheet('tell')} onClose={() => setSheet(null)} />}

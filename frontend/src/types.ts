@@ -323,12 +323,38 @@ export interface Question {
 }
 
 /** The decision maths for a scenario (offline demo): the posterior, the expected value of each action, and what it says to do. */
+/** One line of reasoning: what it is, which way it pushes, in a few words. */
+export interface Reason {
+  text: string
+  effect: 'up' | 'down' | 'none'
+  note: string
+}
+
+/** What to say about one path: a headline figure, a verdict, why, and the reasons that are about that path. */
+export interface PathSummary {
+  stat: string
+  of: string
+  pick: string
+  why: string
+  reasons: Reason[]
+}
+
 export interface AnalysisView extends Analysis {
   payoff: Record<Action, { interested: number; not: number }>
   /** every question has been answered, so this is the conclusion */
   final: boolean
+  /** the recommendation in a few words */
   headline: string
-  verdict: string
+  /** one or two plain sentences on why */
+  why: string
+  /** what moved the odds, in a few words each */
+  reasons: Reason[]
+  /** the same, for each scripted life: what to say when that path is the one being looked at */
+  byPath: Record<Action, PathSummary>
+  /** which scripted life each path (by branch id) plays */
+  paths: Record<string, Action>
+  /** the person's own wording for each scripted life, when they gave one */
+  titles: Partial<Record<Action, string>>
   sources: CitedSource[]
   respondsInputs: { interested: number; not: number }
   labels: Record<Action, string>

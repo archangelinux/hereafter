@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Api } from '../api'
+import { Summary } from './Summary'
 import { BasisMark } from '../page/marks'
 import { MEASURES, MeasuresBlock, WORDS, markTone } from './MeasuresBlock'
 import { theme } from '../theme'
@@ -31,8 +32,6 @@ interface Props {
   onAnswer: (q: Question, a: string) => void
   onSkip: (q: Question) => void
   onModel: () => void
-  /** open the numbers behind the recommendation, when this decision has them */
-  onNumbers?: () => void
   /** commit a set of possibilities: "assume these happen". One commit, however many are ticked. */
   onPin: (keys: string[]) => void
   step: number | null
@@ -91,10 +90,11 @@ export function MergePanel(p: Props) {
       </ul>
 
       <div className="h-merge__rest">
-        {scenario.analysis && p.onNumbers && (
-          <p className="h-merge__numbers"><button type="button" className="h-chip" onClick={p.onNumbers}>Show the numbers</button><span className="h-muted">{scenario.analysis.final ? scenario.analysis.headline : 'what it says so far'}</span></p>
+        {scenario.analysis && (
+          <Summary analysis={scenario.analysis} action={head ? (scenario.analysis.paths[head.branch.id] ?? null) : null} question={scenario.questions.find((q) => !q.answer) ?? null}
+            answered={scenario.questions.filter((q) => q.answer).length} total={scenario.questions.length} busy={!!p.busy?.startsWith('answer:')} onAnswer={p.onAnswer} />
         )}
-        {p.question && head?.branch.status === 'open' && (
+        {!scenario.analysis && p.question && head?.branch.status === 'open' && (
           <div className="h-ask">
             <p><b>{p.question.text}</b></p>
             <p className="h-muted">{p.question.why}</p>
@@ -112,9 +112,9 @@ export function MergePanel(p: Props) {
           </p>
         )}
 
-        {head?.branch.measures && <MeasuresBlock measures={head.branch.measures} step={p.step} person={p.person} />}
+        {!scenario.analysis && head?.branch.measures && <MeasuresBlock measures={head.branch.measures} step={p.step} person={p.person} />}
 
-        {events.length > 0 && (() => {
+        {!scenario.analysis && events.length > 0 && (() => {
           // One at a time: the next thing that could happen WHERE THE GHOST STANDS. Move along the path
           // — a press, or a click on one of its circles — and this is the possibility of that point:
           // one whose own moment takes in this step, else the next one still ahead of it.
@@ -180,7 +180,7 @@ export function MergePanel(p: Props) {
           </form>
         )}
 
-        {head && (
+        {head && !scenario.analysis && (
           <ul className="h-actions">
             {head.branch.status === 'open' && <li><button type="button" onClick={p.onCommit} title="Say what you would do at this moment; what follows is redrawn from it. You can undo it.">Commit <kbd>K</kbd></button></li>}
             {head.branch.status === 'open' && <li><button type="button" onClick={p.onInside} title="Split this path here into two or more paths.">Branch <kbd>B</kbd></button></li>}

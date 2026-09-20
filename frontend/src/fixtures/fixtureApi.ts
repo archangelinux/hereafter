@@ -4,13 +4,13 @@
 import { applyPatch, LOCAL_MODEL, type Api } from '../api'
 import { compareViews, plainChapter } from '../derive'
 import type { BranchView, Commit, LifeEvent, Scenario } from '../types'
-import { ACTIONS } from './decision'
-import { analysisFor, DEMO_SCRIPT, demoBranches, demoChapters, demoEvidence, demoInventory, demoPerson, demoQuestions, demoRare, demoRareChapters, demoResearch, demoState, demoTrunkEvents, THIS_YEAR } from './demo'
+import { ACTIONS, type Action } from './decision'
+import { analysisFor, DEMO_SCRIPT, lifeFor, demoBranches, demoChapters, demoEvidence, demoInventory, demoPerson, demoQuestions, demoRare, demoRareChapters, demoResearch, demoState, demoTrunkEvents, THIS_YEAR } from './demo'
 
 const RESEARCH_STEP_MS = 1400
 
 export function createFixture(): Api {
-  // The demo opens on a clean island: Sam's past on main and nothing to decide. The presenter asks the question live
+  // The demo opens on a clean island: Rohan's past on main and nothing to decide. The presenter asks the question live
   // and it plays out on rails. ?preload opens with the decision already asked, as a fallback.
   const preload = new URLSearchParams(location.search).has('preload')
   const events: LifeEvent[] = structuredClone(demoTrunkEvents)
@@ -18,6 +18,7 @@ export function createFixture(): Api {
   const scenarios: Scenario[] = []
   const templates = demoBranches
   const baseSolidity = new Map<string, number[]>() // each path's solidity before any answer moved it
+  const actionOf = new Map<string, Action>() // which scripted life each path plays: talk, follow or bury
   const undoStack = new Map<string, BranchView[]>()
   const researchStarted = new Map<string, number>()
   const chapterAskedAt = new Map<string, number>()
@@ -55,12 +56,14 @@ export function createFixture(): Api {
     } else if (shown < steps.length) v.branch.research = 'running'
   }
 
-  /** Whatever is typed maps, in order, onto the three scripted lives: talk, follow, bury. */
+  /** Whatever is typed plays the scripted life it is about (by its words), so "talk to her" and "ask her out" both get the talking life. */
   function makeDecision(person_id: string, situation: string, options: { title: string; details: string; deadline?: string }[], formed: boolean, assuming: string | null) {
     const id = `sc-local-${++counter}`
     const made: BranchView[] = options.map((o, i) => {
-      const template = templates[i % templates.length]
+      const action = lifeFor(o.title)
+      const template = templates[ACTIONS.indexOf(action)]
       const bid = formed ? template.branch.id : `br-local-${++counter}`
+      actionOf.set(bid, action)
       const copy: BranchView = structuredClone(template)
       copy.branch = {
         ...copy.branch, id: bid, label: o.title, scenario_id: id, option_id: `op-${bid}`, status: 'open', forked_at: today(), commits: [],
@@ -77,11 +80,17 @@ export function createFixture(): Api {
       }
       return copy
     })
+    const pathsOf = (lives: BranchView[]) => Object.fromEntries(lives.map((v) => [v.branch.id, actionOf.get(v.branch.id)!])) as Record<string, Action>
+    const titlesOf = (lives: BranchView[]) => {
+      const titles: Partial<Record<Action, string>> = {}
+      for (const v of lives) titles[actionOf.get(v.branch.id)!] ??= v.branch.label
+      return titles
+    }
     const scenario: Scenario = {
       id, person_id, situation, created_at: today(), status: 'open', decided_branch_id: null,
       horizon: { unit: 'days', count: 30 }, scale: 'small',
       questions: demoQuestions(id, made.map((m) => m.branch.option_id!)),
-      analysis: analysisFor({}),
+      analysis: { ...analysisFor({}, titlesOf(made)), paths: pathsOf(made) },
       assuming_branch_id: assuming,
       options: options.map((o, i) => ({ id: made[i].branch.option_id!, title: o.title, details: o.details, deadline: null })),
       branch_ids: made.map((m) => m.branch.id),
@@ -149,10 +158,10 @@ export function createFixture(): Api {
       // the odds move with what was said; the path the numbers now favour firms up and the others recede
       const said: Record<string, string> = {}
       for (const q of scenario.questions) if (q.answer) said[q.id.replace(`-${scenario.id}`, '')] = q.answer
-      scenario.analysis = analysisFor(said)
+      scenario.analysis = { ...analysisFor(said, scenario.analysis?.titles ?? {}), paths: scenario.analysis?.paths ?? {} }
       const best = scenario.analysis.recommended
-      scenario.branch_ids.forEach((bid, i) => {
-        const action = ACTIONS[i % ACTIONS.length]
+      scenario.branch_ids.forEach((bid) => {
+        const action = actionOf.get(bid) ?? 'talk'
         const factor = action === best ? 1.12 : action === 'follow' ? 0.55 : 0.85
         const v = views.find((x) => x.branch.id === bid)
         if (!v) return

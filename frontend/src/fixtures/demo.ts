@@ -1,16 +1,16 @@
 // The offline demo: one scripted story, played back by fixtureApi.ts. Nothing here is loaded for a real person.
 //
-//   Sam, 22, computer science, 5'10" (177.8 cm), interned at a large software company, builds developer tools.
+//   Rohan, 22, computer science, 5'10" (177.8 cm), interned at a large software company, builds developer tools.
 //   He is at a hackathon and likes a girl there. He asks what to do and gives three options:
 //   talk to her, follow her around, bury it. Hereafter answers with probabilities and expected values.
 //
 // The maths is real (decision.ts). What is *published* below carries the source and the sentence as it was read;
 // everything else is labelled "assumption". The profile ("background check") is sample data, and the loading
-// animation that precedes it is scripted, not a scrape. It uses only Sam's own accounts and knows nothing about her
+// animation that precedes it is scripted, not a scrape. It uses only Rohan's own accounts and knows nothing about her
 // beyond what his answers say.
 
-import type { AnalysisView, Basis, BranchView, Marks, Measure, BranchYear, Chapter, Domain, Evidence as EvidenceDoc, LifeEvent, Outlook, Person, PossibleEvent, Question, ResearchStep, Scenario, StateVector } from '../types'
-import { ACTIONS, LABEL, PAYOFF, RESPONDS, analyse, type Evidence, type Source } from './decision'
+import type { AnalysisView, Basis, PathSummary, Reason, BranchView, Marks, Measure, BranchYear, Chapter, Domain, Evidence as EvidenceDoc, LifeEvent, Outlook, Person, PossibleEvent, Question, ResearchStep, Scenario, StateVector } from '../types'
+import { ACTIONS, LABEL, PAYOFF, RESPONDS, analyse, type Action, type Analysis, type Evidence, type Source } from './decision'
 
 const PERSON_ID = 'offline'
 export const THIS_YEAR = new Date().getFullYear()
@@ -24,7 +24,7 @@ const on = (n: number) => {
 }
 const today = iso(0)
 
-export const demoPerson: Person = { id: PERSON_ID, display_name: 'Sam', birth_year: THIS_YEAR - 22, sex: null, personality: null }
+export const demoPerson: Person = { id: PERSON_ID, display_name: 'Rohan', birth_year: THIS_YEAR - 22, sex: null, personality: null }
 
 export const demoState: StateVector = {
   year: THIS_YEAR, age: 22, city: 'Waterloo', education: 'in a computer science degree', field: 'software', employment: 'student',
@@ -127,6 +127,25 @@ const talk: PathScript = {
   ],
 }
 
+const askOut: PathScript = {
+  id: 'br-ask', label: 'Ask her out', scenario: HACK, option: 'op-ask', steps: A_MONTH, solid: [0.95, 0.66, 3],
+  model: [
+    ev('says_yes', 'she says yes', 'friends', 'as often as not', 'sourced', 'ev-ask-out'),
+    ev('kind_no', 'she kindly says no', 'mind', 'as often as not'),
+    ev('sting', 'it stays a little awkward for the weekend', 'mind', 'sometimes'),
+    ev('dinner', 'you go out for food together', 'friends', 'as often as not'),
+  ],
+  beats: [
+    [0, 'friends', 'choice', 'You ask if she would like to get food after the demos'],
+    [0, 'friends', 'says_yes', 'She smiles, a little surprised, and says yes', 'sourced', 'ev-ask-out'],
+    [1, 'friends', 'dinner', 'You end up talking until the venue closes'],
+    [2, 'work', 'demo', 'You watch each other’s demos from the front'],
+    [5, 'friends', 'message', 'She messages you first the next day'],
+    [14, 'friends', 'seeing', 'You see each other again the following weekend'],
+    [30, 'mind', 'known', 'Whatever comes of it, you asked, and you know'],
+  ],
+}
+
 const follow: PathScript = {
   id: 'br-follow', label: 'Follow her around', scenario: HACK, option: 'op-follow', steps: A_MONTH, solid: [0.95, 0.72, 3],
   model: [
@@ -162,7 +181,8 @@ const bury: PathScript = {
   ],
 }
 
-export const demoBranches: BranchView[] = [talk, follow, bury].map(path)
+/** In the order of ACTIONS (talk, ask, follow, bury): the fixture picks a life by that index. */
+export const demoBranches: BranchView[] = [talk, askOut, follow, bury].map(path)
 
 // ---------------------------------------------------------------- sources: published (with the sentence read) or assumption
 
@@ -208,11 +228,11 @@ const S = (id: string) => SOURCES.find((x) => x.id === id)!
 
 /** From the background check. Each is a likelihood ratio: how many times likelier it is if she is interested than if not. */
 export const BACKGROUND: Evidence[] = [
-  { id: 'height', label: '5′10″ (177.8 cm)', from: 'your profile', lr: 1.0, kind: 'assumption',
+  { id: 'height', label: '5′10″ (177.8 cm)', from: 'your profile', lr: 1.0, kind: 'assumption', short: '5′10″ is average for men your age',
     why: 'This is the average for Canadian men of your age (177.70 cm, Statistics Canada), so it neither helps nor hurts.' },
-  { id: 'company', label: 'Worked at a large software company', from: 'LinkedIn', lr: 1.1, kind: 'assumption',
+  { id: 'company', label: 'Worked at a large software company', from: 'LinkedIn', lr: 1.1, kind: 'assumption', short: 'You worked at a large company',
     why: 'Status and income affect who gets contacted in online-dating data (Hitsch et al.). The size of the nudge is assumed.' },
-  { id: 'shared', label: 'You are both at the same hackathon', from: 'GitHub', lr: 1.15, kind: 'assumption',
+  { id: 'shared', label: 'You are both at the same hackathon', from: 'GitHub', lr: 1.15, kind: 'assumption', short: 'You are at the same hackathon',
     why: 'A shared place and interests: people prefer similar partners (Hitsch et al.). The size is assumed.' },
 ]
 
@@ -244,33 +264,111 @@ export const demoQuestions = (scenarioId: string, optionIds: string[]): Question
 
 const pct = (x: number) => `${Math.round(x * 100)}%`
 
-/** The analysis for a decision given the answers so far. `answers` maps a question id (without the scenario suffix) to the choice text. */
-export function analysisFor(answers: Record<string, string>): AnalysisView {
+/** What to say about each life, in plain words, from the current numbers. */
+function pathSummaries(a: Analysis): Record<Action, PathSummary> {
+  const p = a.p
+  const best = a.recommended
+  const t = a.thresholds
+  const talkReasons: Reason[] = [
+    { text: `${pct(p)} chance she’s interested`, effect: p >= t.talk ? 'up' : 'down', note: p >= t.talk ? `above the ${pct(t.talk)} where a chat pays` : `below the ${pct(t.talk)} where a chat pays` },
+    { text: 'If she isn’t interested', effect: 'none', note: 'you lose almost nothing: it’s just a conversation' },
+    { text: 'If she is', effect: 'up', note: 'it opens the door, and you can ask her out after' },
+    { text: 'People expect more refusals than they get', effect: 'up', note: 'published finding' },
+  ]
+  const askReasons: Reason[] = [
+    { text: `${pct(p)} chance she’s interested`, effect: p >= t.ask ? 'up' : 'down', note: p >= t.ask ? `above the ${pct(t.ask)} where asking pays` : `below the ${pct(t.ask)} where asking pays` },
+    { text: 'If she says yes', effect: 'up', note: 'you get a date, the best outcome here' },
+    { text: 'If she says no', effect: 'down', note: 'it stings and stays a little awkward all weekend' },
+    { text: 'A chat first would tell you more', effect: p >= t.askOverTalk ? 'none' : 'down', note: p >= t.askOverTalk ? `you’re past the ${pct(t.askOverTalk)} where asking beats it` : `asking beats it only above ${pct(t.askOverTalk)}` },
+  ]
+  const followReasons: Reason[] = [
+    { text: 'If she’s interested', effect: 'down', note: 'it still puts her off' },
+    { text: 'If she isn’t', effect: 'down', note: 'it’s worse: she notices and is uncomfortable' },
+    { text: 'The law', effect: 'down', note: 'repeatedly following someone can be criminal harassment' },
+  ]
+  const buryReasons: Reason[] = [
+    { text: 'Nothing can go wrong', effect: 'up', note: 'a small, sure result' },
+    { text: 'You may wonder for a long time', effect: 'down', note: 'regrets about not acting last longer (published)' },
+    { text: `If she is interested (${pct(p)})`, effect: 'down', note: 'you miss it' },
+  ]
+  return {
+    talk: {
+      stat: pct(a.responds), of: 'chance she talks with you',
+      pick: best === 'talk' ? 'Best first step' : best === 'ask' ? 'A good, gentle start' : 'Not worth it yet',
+      why: best === 'talk'
+        ? `It’s the gentlest way in: little to lose, and it shows you where you stand (about ${pct(p)} chance she’s interested). Ask her out once there’s a clearer sign.`
+        : best === 'ask'
+          ? `Low risk and worth doing, but at about ${pct(p)} chance she’s interested, asking her out directly is worth more.`
+          : `With only about ${pct(p)} chance she’s interested, even a friendly chat isn’t worth it yet.`,
+      reasons: talkReasons,
+    },
+    ask: {
+      stat: pct(a.saysYes), of: 'chance she says yes',
+      pick: best === 'ask' ? 'Worth asking' : best === 'talk' ? 'A bit early' : 'Not now',
+      why: best === 'ask'
+        ? `At about ${pct(p)} chance she’s interested it’s worth the risk: a date if she is, a small sting if not.`
+        : best === 'talk'
+          ? `At about ${pct(p)} it’s early: asking straight out only pays above about ${pct(t.askOverTalk)}. Talk first, then ask once you see a sign.`
+          : `Below about ${pct(t.ask)} the sting isn’t worth the risk.`,
+      reasons: askReasons,
+    },
+    follow: {
+      stat: '0%', of: 'chance it leaves you better off', pick: 'Don’t',
+      why: 'It loses whether she’s interested or not, and repeatedly following someone can be criminal harassment.',
+      reasons: followReasons,
+    },
+    bury: {
+      stat: '100%', of: 'chance you’re no worse off, but only just', pick: best === 'bury' ? 'Safe, and right for now' : 'Safe, but it lingers',
+      why: best === 'bury'
+        ? `At about ${pct(p)} chance she’s interested, a small sure thing beats a long shot. Waiting for a clearer sign costs nothing.`
+        : 'It never goes wrong, but it never goes right either, and what you didn’t do tends to stay with you longer than what you did.',
+      reasons: buryReasons,
+    },
+  }
+}
+
+/** Which scripted life an option is about, read from its words: following, burying it, asking her out, or (by default) just talking. */
+export const lifeFor = (title: string): Action => {
+  const t = title.toLowerCase()
+  if (/\b(follow|stalk|trail|chase|shadow|creep)/.test(t)) return 'follow'
+  if (/\b(bury|forget|ignore|suppress|nothing|feelings|move on|let it go|drop it|hide)/.test(t)) return 'bury'
+  if (/\bask(ing)? (her )?(out|for her|to (dinner|lunch|coffee|go))|\btake her out|\binvite|\bdate\b|\bdinner\b|\bpropose/.test(t)) return 'ask'
+  return 'talk'
+}
+
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1)
+
+/** How a ratio reads in plain words. */
+const noteFor = (lr: number) => (lr === 1 ? 'no effect' : lr >= 2 ? 'raises it a lot' : lr > 1 ? 'nudges it up' : lr <= 0.5 ? 'lowers it a lot' : 'lowers it a little')
+
+/** The analysis for a decision given the answers so far. `answers` maps a question id (without the scenario suffix) to the choice text;
+ *  `titles` is the person's own wording for each life, so the summary speaks in their words. */
+export function analysisFor(answers: Record<string, string>, titles: Partial<Record<Action, string>> = {}): AnalysisView {
   const steps: Evidence[] = [...BACKGROUND]
   for (const q of QUESTIONS) {
     const given = answers[q.id]
     const choice = q.choices.find((c) => c.text === given)
-    if (choice) steps.push({ id: q.id, label: choice.label, from: 'your answer', lr: choice.lr, kind: 'assumption', why: 'You told me this; the size of its effect is a demo assumption.' })
+    if (choice) steps.push({ id: q.id, label: choice.label, from: 'your answer', lr: choice.lr, kind: 'assumption', short: choice.label, why: 'You told me this; the size of its effect is a demo assumption.' })
   }
   const a = analyse(steps)
   const final = QUESTIONS.every((q) => answers[q.id])
-  const talkEv = a.actions.find((x) => x.action === 'talk')!.ev
-  const burySure = a.actions.find((x) => x.action === 'bury')!.ev
-  const headline = a.recommended === 'talk' ? 'Talk to her' : 'Don’t approach her yet'
-  const verdict = a.recommended === 'talk'
-    ? `Talk to her. On what you have told me the chance she is interested is about ${pct(a.p)}, and talking beats doing nothing whenever that is above ${pct(a.threshold)}. `
-      + `If she is not interested you lose a little (an awkward minute, about ${Math.abs(PAYOFF.talk.not)} points); if she is, you gain a lot. `
-      + `Expected value: ${talkEv.toFixed(0)} points against ${burySure.toFixed(0)} for doing nothing. `
-      + `Following her loses in both worlds and repeatedly following someone can be criminal harassment.`
-    : `Don’t approach her yet. On what you have told me the chance she is interested is about ${pct(a.p)}, below the ${pct(a.threshold)} at which talking pays. `
-      + `The small sure thing beats a long shot (${burySure.toFixed(0)} points against ${talkEv.toFixed(0)}). `
-      + `Following her is worse than either: it loses whether she is interested or not.`
+  const t = a.thresholds
+  const headline = a.recommended === 'talk' ? cap(titles.talk ?? 'Talk to her') : a.recommended === 'ask' ? cap(titles.ask ?? 'Ask her out') : 'Don’t approach her yet'
+  const why = a.recommended === 'talk'
+    ? `Start with a chat: it’s worth doing once there’s a ${pct(t.talk)} chance she’s interested, and you’re at ${pct(a.p)}. Asking her out directly needs about ${pct(t.askOverTalk)}. Following her loses either way.`
+    : a.recommended === 'ask'
+      ? `At ${pct(a.p)}, asking her out is worth more than a chat (it pays above ${pct(t.askOverTalk)}). If she’s interested you get a date; if not, it stings for a bit. Following her loses either way.`
+      : `Below ${pct(t.talk)} the risk isn’t worth it, and you are at ${pct(a.p)}. Staying quiet is a small, sure thing. Following her is worse than both.`
   return {
     ...a,
     payoff: PAYOFF,
     final,
     headline,
-    verdict,
+    why,
+    reasons: steps.map((s) => ({ text: s.short ?? s.label, effect: s.lr > 1 ? 'up' : s.lr < 1 ? 'down' : 'none', note: noteFor(s.lr) })),
+    byPath: pathSummaries(a),
+    paths: {},
+    titles,
     sources: SOURCES,
     respondsInputs: RESPONDS,
     labels: Object.fromEntries(ACTIONS.map((x) => [x, LABEL[x]])) as AnalysisView['labels'],
@@ -287,6 +385,10 @@ export const demoEvidence: EvidenceDoc[] = [
   e('ev-ask', 'br-talk', 'researched', 'People who ask directly are told yes more often than they expect.', {
     value: '50%', unit: 'overestimate of how many people the asker thought they would have to ask', source_title: 'Flynn & Lake (2008), Journal of Personality and Social Psychology', source_url: S('ask').url,
     snippet: S('ask').quote ?? null, used_for: 'Set how likely it is that she at least talks with you when you go over.',
+  }),
+  e('ev-ask-out', 'br-ask', 'researched', 'People who ask directly are told yes more often than they expect.', {
+    value: '50%', unit: 'overestimate of how many people the asker thought they would have to ask', source_title: 'Flynn & Lake (2008), Journal of Personality and Social Psychology', source_url: S('ask').url,
+    snippet: S('ask').quote ?? null, used_for: 'Set how likely it is that she says yes when you ask.',
   }),
   e('ev-law', 'br-follow', 'researched', 'Repeatedly following someone from place to place can be criminal harassment in Canada.', {
     value: '10 years', unit: 'the most an indictable conviction can carry', source_title: 'Criminal Code (Canada), section 264', source_url: S('law').url,
@@ -320,6 +422,13 @@ export const demoChapters: Chapter[] = [
   chapter(talk, 4, 5, 'Whatever happens next', [
     ['A second coffee turns into dinner. It might not have. About as often as not she would say no, politely, and you would be exactly where you started but without the wondering.'],
   ]),
+  chapter(askOut, 0, 3, 'A question', [
+    ['You pick a quiet moment after the demos and ask, plainly, if she would like to get food. It takes about four seconds and feels much longer. Most people asked directly say yes more often than the person asking expects.', 'ev-ask-out'],
+    ['If she is interested, this is the best thing you can do. If she isn’t, it stings for an evening, and the weekend is a little awkward.'],
+  ]),
+  chapter(askOut, 4, 5, 'The next weekend', [
+    ['She messages first. You see each other again. Whatever comes of it, you asked: you don’t have to guess at what the answer would have been.'],
+  ]),
   chapter(follow, 0, 3, 'Space', [
     ['You tell yourself you are only staying nearby. By the third session she has moved to a different table, and an organizer asks you, kindly, to give her some room.', 'ev-law'],
     ['Whether or not she was interested, this could not have gone well. Repeatedly following someone is the one option here that loses in both worlds.'],
@@ -347,6 +456,13 @@ const RESEARCH: Record<string, [state: ResearchStep['state'], message: string, u
     ['reading', 'Reading: how often people say yes when asked directly', S('ask').url],
     ['found', 'Found a figure, with the sentence it came from'],
     ['reading', 'Reading: how tall men usually are at your age', S('height').url],
+    ['found', 'Found a figure, with the sentence it came from'],
+  ],
+  'br-ask': [
+    ['found', 'Looked in your own log first: four things that bear on this'],
+    ['reading', 'Reading: how often people say yes when asked directly', S('ask').url],
+    ['found', 'Found a figure, with the sentence it came from'],
+    ['reading', 'Reading: how often people say yes to a date', S('speed').url],
     ['found', 'Found a figure, with the sentence it came from'],
   ],
   'br-follow': [
@@ -409,6 +525,7 @@ for (const view of demoBranches) {
 const EFFECTS: Record<string, Partial<Record<Measure, number>>> = {
   replies: { joy: 2, fulfilment: 1 }, coffee: { joy: 2 }, declines: { joy: -1 }, date: { joy: 2, fulfilment: 2 },
   noticed: { joy: -2 }, steps_in: { joy: -2, fulfilment: -1 }, regret: { joy: -2, fulfilment: -1 }, shut_out: { joy: -1, fulfilment: -1 },
+  says_yes: { joy: 3, fulfilment: 2 }, kind_no: { joy: -2 }, sting: { joy: -1 }, dinner: { joy: 2, fulfilment: 1 },
   relief: { joy: 1 }, wonder: { joy: -1, fulfilment: -1 }, lingers: { joy: -1 },
 }
 const MEASURE_LIST: Measure[] = ['health', 'joy', 'fulfilment', 'money']
