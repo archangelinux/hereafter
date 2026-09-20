@@ -313,13 +313,13 @@ export default function App() {
     try {
       let s = session
       if (!s) {
-        s = await api.createPerson({})
+        s = await api.createPerson({ display_name: draft.name || undefined })
         saveSession(s)
         setToken(s.token || null)
         setSession(s)
       }
       setIngested(await api.ingest({
-        person_id: s.person_id, text: draft.text || undefined,
+        person_id: s.person_id, display_name: draft.name || undefined, text: draft.text || undefined,
         files: draft.files, // draft.sources (the accounts chosen) is not sent yet: reading them comes with the Browserbase hookup
       }))
     } catch {

@@ -363,6 +363,10 @@ input:focus, textarea:focus { outline: none; border-bottom-color: var(--color-co
 .setup__results li { display: grid; gap: 1px; }
 .setup__results b { font-weight: 500; overflow-wrap: anywhere; }
 .setup__results span { color: var(--color-text-2); }
+.setup--name { text-align: center; padding: 44px 40px 36px; }
+.setup--name .setup__title { margin-top: 6px; }
+.setup .setup__name { width: min(260px, 100%); margin: 26px auto 30px; display: block; text-align: center; font-family: var(--font-display); font-size: 22px; line-height: 30px; background: transparent; border: 0; border-bottom: 1.5px solid var(--color-text-2); border-radius: 0; padding: 4px 6px; }
+.setup .setup__name:focus { border-color: var(--color-coral-deep); box-shadow: none; }
 @media (max-width: 480px) { .setup { padding: 24px 20px; } .connect__row { gap: 8px; } .connect__icon { height: 56px; } }
 
 /* every button is reset: nothing may fall back to browser chrome */

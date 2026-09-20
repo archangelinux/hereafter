@@ -4,6 +4,7 @@ import { Connect } from './Connect'
 import type { Platform } from './platforms'
 
 export interface OfferingDraft {
+  name: string
   text: string
   files: File[]
   /** the accounts chosen to learn from; nothing is read from them yet */
@@ -19,8 +20,13 @@ interface Props {
   onClose?: () => void
 }
 
-/** The one intake surface: words, files, handles. All optional, any combination. */
+/**
+ * The one intake surface: words, files, handles. All optional, any combination. On first run it opens with a
+ * page that asks only for a name; the page after it greets them by it.
+ */
 export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }: Props) {
+  const [name, setName] = useState('')
+  const [askedName, setAskedName] = useState(!firstRun)
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [sources, setSources] = useState<Platform[]>([])
@@ -34,7 +40,11 @@ export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }:
   }
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    onSubmit({ text: text.trim(), files, sources })
+    onSubmit({ name: name.trim(), text: text.trim(), files, sources })
+  }
+  const askName = (e: FormEvent) => {
+    e.preventDefault()
+    if (name.trim()) setAskedName(true)
   }
 
   if (result) {
@@ -58,15 +68,33 @@ export function Offering({ busy, firstRun, result, onSubmit, onEnter, onClose }:
     )
   }
 
+  if (!askedName) {
+    return (
+      <div className="setup-ground">
+        <form onSubmit={askName} className="setup setup--name" aria-label="What's your name?">
+          <p className="setup__brand">Hereafter</p>
+          <h1 className="setup__title">What's your name?</h1>
+          <input className="setup__name" value={name} onChange={(e) => setName(e.target.value)} autoFocus
+            autoComplete="given-name" aria-label="Your name" maxLength={80} />
+          <div className="setup__actions">
+            <button type="submit" className="setup__primary" disabled={!name.trim()}>Continue</button>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
+  const greeting = name.trim()
   return (
     <div className="setup-ground">
       <form onSubmit={submit} className="setup" aria-label="Tell Hereafter about yourself">
         <header className="setup__head">
           <p className="setup__brand">Hereafter</p>
           {!firstRun && onClose && <button type="button" className="setup__link" onClick={onClose}>Close</button>}
+          {firstRun && <button type="button" className="setup__link" onClick={() => setAskedName(false)}>Back</button>}
         </header>
-        <h1 className="setup__title">Tell Hereafter about yourself</h1>
-        <p className="setup__sub">All optional. The more it knows, the more specific your paths get.</p>
+        <h1 className="setup__title">{greeting ? `Hi, ${greeting}` : 'Tell Hereafter about yourself'}</h1>
+        <p className="setup__sub">{greeting ? 'Tell Hereafter about yourself. ' : ''}All optional. The more it knows, the more specific your paths get.</p>
 
         <label className="setup__field">
           <span>About you</span>
