@@ -83,6 +83,7 @@ const typing = () => ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeEle
 export default function App() {
   const [api, setApi] = useState<Api | null>(null)
   const [session, setSession] = useState<Session | null>(loadSession)
+  const [onboarding, setOnboarding] = useState(() => !loadSession()) // a new person sees only the intake pages until they press Continue on the last one
   const [ownTrunk, setTrunk] = useState<TrunkResponse | null>(null)
   const [ownViews, setViews] = useState<BranchView[]>([])
   const [ownScenarios, setScenarios] = useState<Scenario[]>([])
@@ -124,7 +125,7 @@ export default function App() {
   const scenarios = ownScenarios
   const trunk = ownTrunk
   useEffect(() => {
-    if (api?.offline && !session) setSession({ person_id: 'offline', token: 'offline' })
+    if (api?.offline && !session) (setSession({ person_id: 'offline', token: 'offline' }), setOnboarding(false))
   }, [api, session])
 
   const refresh = useCallback(async () => {
@@ -347,7 +348,7 @@ export default function App() {
   // the keyboard: light gestures only. Merge has no shortcut on purpose.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (typing() || e.metaKey || e.ctrlKey || e.altKey) return
+      if (onboarding || typing() || e.metaKey || e.ctrlKey || e.altKey) return
       const k = e.key.toLowerCase()
       if (k === 'escape') {
         if (deciding) setDeciding(false)
@@ -369,12 +370,12 @@ export default function App() {
     }
     // N opens the decision box on key-up, so the letter itself never lands in the field
     const onUp = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'n' && !typing() && !sheet && !e.metaKey && !e.ctrlKey && !e.altKey) (setAssuming(null), setDeciding(true))
+      if (e.key.toLowerCase() === 'n' && !onboarding && !typing() && !sheet && !e.metaKey && !e.ctrlKey && !e.altKey) (setAssuming(null), setDeciding(true))
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('keyup', onUp)
     return () => (window.removeEventListener('keydown', onKey), window.removeEventListener('keyup', onUp))
-  }, [active, siblings, sheet, committing, deciding, switchTo, toggleMode, undo, shown])
+  }, [active, siblings, sheet, committing, deciding, switchTo, toggleMode, undo, shown, onboarding])
 
   // Living a path is stepping through it in the world itself — there is no panel of prose.
   const steps = useSteps({
@@ -455,6 +456,7 @@ export default function App() {
 
   const firstRun = !session
   const showOffering = firstRun || sheet === 'offering' || ingested !== null
+  const intake = onboarding && showOffering // nothing of the app itself shows behind the intake pages
   const asking = active?.branch.status === 'open' ? (scenario?.questions ?? []).filter((q) => !q.answer && !skipped.includes(q.id) && (q.applies_to.length === 0 || q.applies_to.includes(active.branch.option_id ?? ''))) : []
 
   const viewProps: ViewProps | null = trunk && {
@@ -472,7 +474,7 @@ export default function App() {
   return (
     <div className={`app app--${view}`}>
       {/* two views of the same place; the HUD sits over whichever is on */}
-      <div className="stage">
+      {!intake && <div className="stage">
         {viewProps && World && islandAvailable && (view === 'island' || fading) && (
           <div className={`stage__layer ${view === 'island' ? 'is-on' : ''}`}>
             <Boundary onFail={() => setWorldFailed(true)}>
@@ -487,9 +489,9 @@ export default function App() {
             <Line {...viewProps} zones={zones as Zone[]} free={free} onFocusDecision={focusOn} />
           </div>
         )}
-      </div>
+      </div>}
 
-      <div className="hud" style={rails.style}>
+      {!intake && <div className="hud" style={rails.style}>
         <div className="hud__top">
           <button type="button" className="h-link" onClick={() => setRail((v) => !v)}>{rail ? 'Close' : 'Decisions'}</button>
           <span>Hereafter</span>
@@ -596,13 +598,13 @@ export default function App() {
             />
           )}
         </div>
-      </div>
+      </div>}
 
       {sheet === 'compare' && active && <Compare api={api} views={[active, ...siblings.filter((s) => s.branch.id !== active.branch.id)]} scenario={scenario} onSwitch={(id) => (switchTo(id), setSheet(null))} onClose={() => setSheet(null)} />}
       {sheet === 'model' && <ModelSheet api={api} onClose={() => setSheet(null)} />}
       {sheet === 'log' && trunk && <LogView events={trunk.events} reconciliation={trunk.reconciliation ?? []} onTell={() => setSheet('tell')} onClose={() => setSheet(null)} />}
       {sheet === 'inventory' && session && (
-        <InventoryView api={api} personId={session.person_id} onChanged={() => void refresh()} onOffer={() => (setIngested(null), setSheet('offering'))} onErased={() => (clearSession(), setSession(null), setTrunk(null), setViews([]), setScenarios([]), setSheet(null), switchTo(null))} onClose={() => setSheet(null)} />
+        <InventoryView api={api} personId={session.person_id} onChanged={() => void refresh()} onOffer={() => (setIngested(null), setSheet('offering'))} onErased={() => (clearSession(), setSession(null), setTrunk(null), setViews([]), setScenarios([]), setSheet(null), setOnboarding(true), switchTo(null))} onClose={() => setSheet(null)} />
       )}
       {sheet === 'tell' && <Tell busy={busy === 'tell'} error={error} onSubmit={tell} onClose={() => setSheet(null)} />}
       {showOffering && (
@@ -611,7 +613,7 @@ export default function App() {
           firstRun={firstRun}
           result={ingested}
           onSubmit={offer}
-          onEnter={() => (setIngested(null), setSheet(null), void refresh())}
+          onEnter={() => (setIngested(null), setSheet(null), setOnboarding(false), void refresh())}
           onClose={() => setSheet(null)}
         />
       )}
