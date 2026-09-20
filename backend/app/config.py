@@ -45,6 +45,11 @@ STATE_PLANNER_TIMEOUT = int(os.getenv("HEREAFTER_STATE_PLANNER_TIMEOUT", "120"))
 
 BROWSERBASE_API_KEY = os.getenv("BROWSERBASE_API_KEY", "")
 BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
+# A Browserbase context that is already signed in to LinkedIn. When it is set and still signed in,
+# Stagehand reads LinkedIn profiles on it (docs/STAGEHAND.md); otherwise LinkedIn is read as before.
+LINKEDIN_CONTEXT = os.getenv("HEREAFTER_LINKEDIN_CONTEXT", "")
+# "provider/model", the form Stagehand takes; it makes a model call for every act and extract. OpenAI, with OPENAI_API_KEY.
+STAGEHAND_MODEL = os.getenv("HEREAFTER_STAGEHAND_MODEL") or "openai/gpt-5.4-mini"
 
 # The life-table background (friends' weddings and children, parents, money drift) is off unless asked for.
 BACKGROUND = os.getenv("HEREAFTER_BACKGROUND", "off").lower() in ("on", "1", "true", "yes")

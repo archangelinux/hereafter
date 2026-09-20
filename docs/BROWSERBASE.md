@@ -118,4 +118,7 @@ in a Browserbase session. The application itself does not depend on it.
   decision takes about 45 s to a first simulation and about two minutes to finished research.
 - Login-walled profiles (LinkedIn, Instagram) usually yield a glimpse or a breadcrumb, not a
   history. A PDF export of the profile, dropped into Files, works better.
-- Only public pages are read: no logins, no cookies, no kept-alive sessions.
+- Only public pages are read: no logins, no cookies, no kept-alive sessions. The one exception is
+  opt-in and off by default: with `HEREAFTER_LINKEDIN_CONTEXT` set to a Browserbase context that is
+  already signed in to LinkedIn, LinkedIn profiles are read on it through Stagehand
+  ([STAGEHAND.md](STAGEHAND.md)).

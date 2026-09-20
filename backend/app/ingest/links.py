@@ -149,7 +149,14 @@ def load(person_id: str, source: str, handle: str, live: bool) -> list[Page]:
     pages: list[Page] = []
     if live:
         try:
-            if config.BROWSERBASE_API_KEY and config.BROWSERBASE_PROJECT_ID:
+            if source == "linkedin":  # a signed-in browser is set up? Stagehand reads what the wall hides
+                from . import stagehand_linkedin
+
+                got = stagehand_linkedin.read_profile(urls[0])
+                pages = [got] if got else []
+            if pages:
+                pass
+            elif config.BROWSERBASE_API_KEY and config.BROWSERBASE_PROJECT_ID:
                 pages = _load_browserbase(urls)
             else:
                 pages = _load_direct(urls)

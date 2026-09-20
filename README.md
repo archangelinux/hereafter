@@ -66,6 +66,7 @@ Every figure is tagged **published** (with the source and the sentence it was re
 | `docs/API.md` | The contract between the two. |
 | `docs/ELASTICSEARCH.md` | Every index, mapping, retriever and aggregation, who issues which query, and the Agent Builder tools. |
 | `docs/BROWSERBASE.md` | Both crawl jobs, the readability tiers, and the research pipeline. |
+| `docs/STAGEHAND.md` | What Stagehand does here: reads a signed-in LinkedIn profile (Show all, then structured jobs and schools), how a signed-in context is made, and why the rest stays on Playwright. |
 
 ## Rules the code enforces
 
