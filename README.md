@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="hero.png" alt="Hereafter — version control for your future" width="800" />
+</p>
+
 # Hereafter
 
 Version control for your life. The past is an immutable trunk of light; the present moves forward
