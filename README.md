@@ -56,25 +56,6 @@ cd backend && .venv/bin/python -m app.agent --person <person_id> -q "Berlin star
 Offline UI: `http://localhost:5642/?demo` (scripted; maths tested via `npm run test:decision`).
 `?demo&preload` skips the composer.
 
-## Layout
-
-| Path | Role |
-|---|---|
-| `backend/app/sim/engine.py` | Monte Carlo. Seeded 1,000 runs. StatCan life-course background is opt-in (`HEREAFTER_BACKGROUND=on`) and off by default. |
-| `backend/app/sim/outcomes.py` | Generic outcome-model sampler. No LLM import. |
-| `backend/app/jev.py`, `probability.py` | Judge (no probability) then bounded likelihood. `GET /assessment?branch_id=` |
-| `backend/app/scenarios.py`, `outcome_model.py`, `research.py` | Scenario → branches: propose, research, verify, convert. |
-| `backend/app/store.py` | ES create-only or SQLite. Hybrid retrieval + aggregations. |
-| `backend/app/state.py`, `agent_builder.py` | Present-state planner (`HEREAFTER_STATE_PLANNER`: elastic / llm / rules). Logs on `GET /trunk`. |
-| `backend/app/ingest/` | Label → `_extract`. Chat exports measured then dropped. |
-| `backend/app/security.py` | Hashed bearer token, Fernet at rest, `/inventory`, `/erase`. |
-| `backend/app/workflows.py` | Evidence audit. `GET /evidence/health`, `POST /evidence/audit`. |
-| `backend/app/chapters.py`, `evidence.py` | Narrated branch + citations. |
-| `data/*.csv` | Eleven StatCan transition tables. Background weather only; unused on short decisions. `data/SOURCES.md`. |
-| `frontend/` | React Three Fiber + overlay. Tokens in `src/theme.ts`. |
-
-Contracts: [docs/API.md](docs/API.md). Model notes: [docs/MODEL.md](docs/MODEL.md).
-
 ## Invariants
 
 - Past is append-only. Store is `append` + query. ES writes `op_type=create`. API has no PUT, PATCH, or DELETE.
