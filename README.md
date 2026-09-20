@@ -53,9 +53,6 @@ cd backend && .venv/bin/python -m pytest -q
 cd backend && .venv/bin/python -m app.agent --person <person_id> -q "Berlin startup or stay at Acme?"
 ```
 
-Offline UI: `http://localhost:5642/?demo` (scripted; maths tested via `npm run test:decision`).
-`?demo&preload` skips the composer.
-
 ## Invariants
 
 - Past is append-only. Store is `append` + query. ES writes `op_type=create`. API has no PUT, PATCH, or DELETE.
